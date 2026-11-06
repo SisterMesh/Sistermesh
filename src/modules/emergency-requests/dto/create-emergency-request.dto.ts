@@ -15,7 +15,7 @@ export class CreateEmergencyRequestDto {
   @IsEnum(RequestUrgency)
   urgency!: RequestUrgency;
 
-  @ApiProperty({ minimum: 1, maximum: 100 })
+  @ApiProperty({ minimum: 1, maximum: 100, description: 'Required number of confirmed donations.' })
   @IsInt()
   @Min(1)
   @Max(100)

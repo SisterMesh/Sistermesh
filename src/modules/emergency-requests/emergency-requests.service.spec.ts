@@ -60,7 +60,7 @@ describe('EmergencyRequestsService', () => {
       urgency: RequestUrgency.URGENT,
       units: 1,
     };
-    const record = { id: '00000000-0000-4000-8000-000000000006', status: EmergencyRequestStatus.SEARCHING };
+    const record = { id: '00000000-0000-4000-8000-000000000006', status: EmergencyRequestStatus.OPEN };
     const tx = {
       emergencyRequest: { create: jest.fn().mockResolvedValue(record) },
       requestActivity: { create: jest.fn().mockResolvedValue({}) },

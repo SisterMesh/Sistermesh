@@ -216,7 +216,7 @@ model EmergencyRequest {
   requestedBloodGroup BloodGroup
   urgency            RequestUrgency
   units               Int
-  status              EmergencyRequestStatus @default(SEARCHING)
+  status              EmergencyRequestStatus @default(OPEN)
   expiresAt           DateTime?
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
@@ -241,6 +241,7 @@ model DonorResponse {
   donorProfileId   String              @db.Uuid
   donorUserId      String              @db.Uuid
   status           DonorResponseStatus @default(PENDING)
+  submittedStatus  DonorResponseStatus?
   respondedAt      DateTime?
   withdrawnAt      DateTime?
   createdAt        DateTime            @default(now())

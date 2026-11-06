@@ -1,0 +1,2 @@
+ALTER TABLE "EmergencyRequest"
+ALTER COLUMN "status" SET DEFAULT 'OPEN';

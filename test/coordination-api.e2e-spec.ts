@@ -36,7 +36,7 @@ describe('coordination API with verified JWT authentication', () => {
     cancel: jest.fn(),
     updateStatus: jest.fn(),
   };
-  const donorResponses = { respond: jest.fn(), listMine: jest.fn() };
+  const donorResponses = { respond: jest.fn(), listMine: jest.fn(), withdraw: jest.fn(), listForRequest: jest.fn() };
   const donationConfirmations = { confirm: jest.fn() };
 
   beforeAll(async () => {
@@ -125,7 +125,7 @@ describe('coordination API with verified JWT authentication', () => {
   });
 
   it('accepts a signed-in worker request using the database role, not client headers', async () => {
-    const created = { id: '00000000-0000-4000-8000-000000000010', status: 'SEARCHING' };
+    const created = { id: '00000000-0000-4000-8000-000000000010', status: 'OPEN' };
     const body = {
       clientRequestId: '00000000-0000-4000-8000-000000000011',
       requestedBloodGroup: 'O_NEGATIVE',
@@ -192,6 +192,35 @@ describe('coordination API with verified JWT authentication', () => {
       expect.objectContaining({ role: UserRole.HEALTH_WORKER }),
       '00000000-0000-4000-8000-000000000010',
       body,
+    );
+  });
+
+  it('restricts facility response lists to health workers and supports donor withdrawal retries', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000020';
+    const rows = [{ id: 'response-1', status: 'ACCEPTED' }];
+    const withdrawn = { id: 'response-1', status: 'WITHDRAWN' };
+    donorResponses.listForRequest.mockResolvedValue(rows);
+    donorResponses.withdraw.mockResolvedValue(withdrawn);
+
+    await request(app.getHttpServer())
+      .get(`/api/donor-responses/requests/${requestId}`)
+      .set('Authorization', await bearer(UserRole.DONOR))
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/donor-responses/requests/${requestId}`)
+      .set('Authorization', await bearer(UserRole.HEALTH_WORKER))
+      .expect(200, rows);
+    await request(app.getHttpServer())
+      .post(`/api/donor-responses/${requestId}/withdraw`)
+      .set('Authorization', await bearer(UserRole.DONOR))
+      .send({ idempotencyKey: '00000000-0000-4000-8000-000000000021' })
+      .expect(201, withdrawn);
+
+    expect(donorResponses.listForRequest).toHaveBeenCalled();
+    expect(donorResponses.withdraw).toHaveBeenCalledWith(
+      expect.objectContaining({ role: UserRole.DONOR }),
+      requestId,
+      { idempotencyKey: '00000000-0000-4000-8000-000000000021' },
     );
   });
 });

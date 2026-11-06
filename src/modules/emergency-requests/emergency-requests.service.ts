@@ -35,9 +35,6 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       });
     }, 60_000);
     this.expiryTimer.unref();
-    void this.expireDueRequests().catch((error: unknown) => {
-      this.logger.error('Failed to expire due emergency requests at startup.', error);
-    });
   }
 
   onModuleDestroy() {
@@ -192,6 +189,9 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       if (dto.urgency !== undefined) data.urgency = dto.urgency;
       if (dto.units !== undefined) data.units = dto.units;
       if (expiresAt !== undefined) data.expiresAt = expiresAt;
+      if (!Object.keys(data).length) {
+        throw new BadRequestException('Provide at least one request field to update.');
+      }
       const updated = await tx.emergencyRequest.update({
         where: { id: requestId },
         data,
@@ -207,7 +207,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
           metadata: { fields: Object.keys(data) },
         },
       });
-      if (confirmedCount > 0 && confirmedCount >= updated.units && request.status !== EmergencyRequestStatus.FULFILLED) {
+      if (confirmedCount > 0 && confirmedCount >= updated.units) {
         const fulfilled = await tx.emergencyRequest.update({
           where: { id: requestId },
           data: { status: EmergencyRequestStatus.FULFILLED },
@@ -258,6 +258,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async history(user: AuthenticatedUser, requestId: string) {
+    await this.expireDueRequests();
     const facilityId = await this.getWorkerFacility(user);
     const request = await this.prisma.emergencyRequest.findUnique({ where: { id: requestId }, select: { facilityId: true } });
     if (!request || request.facilityId !== facilityId) {
@@ -265,7 +266,89 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
     }
     return this.prisma.requestActivity.findMany({
       where: { requestId },
+      select: {
+        id: true,
+        actorUserId: true,
+        eventType: true,
+        fromStatus: true,
+        toStatus: true,
+        occurredAt: true,
+        metadata: true,
+      },
       orderBy: { occurredAt: 'asc' },
+    });
+  }
+
+  async expireDueRequests(): Promise<number> {
+    const due = await this.prisma.emergencyRequest.findMany({
+      where: {
+        status: { in: [EmergencyRequestStatus.OPEN, EmergencyRequestStatus.PARTIALLY_FILLED] },
+        expiresAt: { lte: new Date() },
+      },
+      select: { id: true },
+    });
+    let expiredCount = 0;
+    for (const { id } of due) {
+      const expired = await this.prisma.$transaction(async (tx) => {
+        const request = await this.lockRequest(tx, id);
+        if (!request) return false;
+        return this.expireLockedRequest(tx, request, new Date());
+      });
+      if (expired) expiredCount += 1;
+    }
+    return expiredCount;
+  }
+
+  private async lockRequest(tx: Prisma.TransactionClient, requestId: string) {
+    await tx.$queryRaw`SELECT "id" FROM "EmergencyRequest" WHERE "id" = ${requestId}::uuid FOR UPDATE`;
+    return tx.emergencyRequest.findUnique({ where: { id: requestId } });
+  }
+
+  private isOpen(status: EmergencyRequestStatus) {
+    return status === EmergencyRequestStatus.OPEN || status === EmergencyRequestStatus.PARTIALLY_FILLED;
+  }
+
+  private async expireLockedRequest(
+    tx: Prisma.TransactionClient,
+    request: { id: string; status: EmergencyRequestStatus; expiresAt: Date | null },
+    now: Date,
+  ) {
+    if (!this.isOpen(request.status) || !request.expiresAt || request.expiresAt > now) return false;
+    const changed = await tx.emergencyRequest.updateMany({
+      where: {
+        id: request.id,
+        status: request.status,
+        expiresAt: { lte: now },
+      },
+      data: { status: EmergencyRequestStatus.EXPIRED },
+    });
+    if (!changed.count) return false;
+    await tx.requestActivity.create({
+      data: {
+        requestId: request.id,
+        eventType: RequestActivityType.EXPIRED,
+        fromStatus: request.status,
+        toStatus: EmergencyRequestStatus.EXPIRED,
+      },
+    });
+    return true;
+  }
+
+  private async recordStatusTransition(
+    tx: Prisma.TransactionClient,
+    requestId: string,
+    actorUserId: string | null,
+    fromStatus: EmergencyRequestStatus,
+    toStatus: EmergencyRequestStatus,
+  ) {
+    const eventType =
+      toStatus === EmergencyRequestStatus.PARTIALLY_FILLED
+        ? RequestActivityType.PARTIALLY_FILLED
+        : toStatus === EmergencyRequestStatus.FULFILLED
+          ? RequestActivityType.FULFILLED
+          : RequestActivityType.STATUS_CHANGED;
+    await tx.requestActivity.create({
+      data: { requestId, actorUserId, eventType, fromStatus, toStatus },
     });
   }
 
