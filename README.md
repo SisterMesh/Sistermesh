@@ -23,9 +23,9 @@ check is `GET /api/health`.
 
 ## Database
 
-The Prisma schema is in `prisma/schema.prisma`. After reviewing the generated
-initial migration and confirming the target schema is safe to extend, apply it
-with:
+The Prisma schema is in `prisma/schema.prisma`; migration files are in
+`prisma/migrations`. After reviewing each new additive migration and confirming
+the target schema is safe to extend, apply it with:
 
 ```sh
 npm run prisma:migrate:deploy
@@ -33,6 +33,26 @@ npm run prisma:migrate:deploy
 
 Migrations are additive and should never be used to replace the existing Neon
 database. Do not run destructive schema changes without explicit approval.
+
+## Authentication and administrator access
+
+Set the existing `SESSION_SECRET` in Replit Secrets to a random value of at
+least 32 bytes. The API derives separate access-token and refresh-token signing
+keys from it. Access tokens last 15 minutes; refresh tokens are rotated, stored
+only as hashes, and sent only in an HTTP-only cookie.
+
+Public registration accepts only `DONOR` or `HEALTH_WORKER`; it cannot create
+administrators. To bootstrap the first administrator, first register an active
+donor or health-worker account and verify that person through your controlled
+process, then run `npm run admin:promote` from an authorised Replit shell and
+confirm the exact account. Later role changes
+are restricted to authenticated administrator endpoints. Never run the
+bootstrap command in an untrusted shell.
+
+Facilities are created by administrators in `PENDING` status and require an
+administrator status change before they become available. Health workers begin
+unverified; only administrators can verify them or assign them to an active
+facility.
 
 ## Checks
 

@@ -19,6 +19,19 @@ enum AccountStatus {
   DEACTIVATED
 }
 
+enum HealthWorkerVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum FacilityStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  REJECTED
+}
+
 enum BloodGroup {
   A_POSITIVE
   A_NEGATIVE
@@ -90,6 +103,7 @@ model User {
   status                AccountStatus          @default(ACTIVE)
   displayName           String
   phoneNumber           String                 @unique
+  passwordHash          String?
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
   donorProfile          DonorProfile?
@@ -109,8 +123,9 @@ model User {
 model DonorProfile {
   id             String      @id @default(uuid()) @db.Uuid
   userId         String      @unique @db.Uuid
-  bloodGroup     BloodGroup
+  bloodGroup     BloodGroup?
   isAvailable    Boolean     @default(true)
+  isProfileComplete Boolean  @default(false)
   locality       String?
   lastActiveAt   DateTime?
   consentedAt    DateTime?
@@ -125,32 +140,41 @@ model DonorProfile {
 }
 
 model HealthWorkerProfile {
-  id             String    @id @default(uuid()) @db.Uuid
-  userId         String    @unique @db.Uuid
-  facilityId     String?   @db.Uuid
-  designation    String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  facility       Facility? @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+  id                    String                       @id @default(uuid()) @db.Uuid
+  userId                String                       @unique @db.Uuid
+  facilityId            String?                      @db.Uuid
+  designation           String?
+  professionalIdentifier String?                      @unique
+  verificationStatus    HealthWorkerVerificationStatus @default(PENDING)
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+  user                  User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facility              Facility?                    @relation(fields: [facilityId], references: [id], onDelete: SetNull)
 
+  @@index([facilityId, verificationStatus])
   @@index([facilityId])
 }
 
 model Facility {
-  id               String                 @id @default(uuid()) @db.Uuid
-  name             String
-  locality         String?
-  state            String?
-  contactPhone     String?
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
-  healthWorkers    HealthWorkerProfile[]
-  requests         EmergencyRequest[]
-  confirmations    DonationConfirmation[]
+  id                   String         @id @default(uuid()) @db.Uuid
+  name                 String
+  facilityType         String?
+  address              String?
+  locality             String?
+  localGovernmentArea  String?
+  state                String?
+  contactPhone         String?
+  status               FacilityStatus @default(PENDING)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  healthWorkers        HealthWorkerProfile[]
+  requests             EmergencyRequest[]
+  confirmations        DonationConfirmation[]
 
   @@index([name])
   @@index([state, locality])
+  @@index([state, localGovernmentArea])
+  @@index([status, state])
 }
 
 model RegisteredDevice {

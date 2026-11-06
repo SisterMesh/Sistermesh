@@ -18,6 +18,11 @@ async function bootstrap(): Promise<void> {
     .setTitle('SisterMesh API')
     .setDescription('Backend API for SisterMesh emergency donor coordination.')
     .setVersion('0.1.0')
+    .addBearerAuth()
+    .addCookieAuth('sistermesh_refresh', {
+      type: 'apiKey',
+      in: 'cookie',
+    })
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document);
