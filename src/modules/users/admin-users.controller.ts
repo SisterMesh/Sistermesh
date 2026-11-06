@@ -8,71 +8,51 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import { AuthenticatedUser } from '../../common/auth/authenticated-user';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { Roles } from '../../common/auth/roles.decorator';
-import { RolesGuard } from '../../common/auth/roles.guard';
+import { AuthenticatedUser, CurrentUser } from '../../common/authenticated-user';
+import { Roles } from '../../common/roles.decorator';
+import { RolesGuard } from '../../common/roles.guard';
+import { UpdateAccountStatusDto } from './dto/update-account-status.dto';
 import { SetUserRoleDto } from './dto/set-user-role.dto';
-import { SetUserStatusDto } from './dto/set-user-status.dto';
 import { UsersService } from './users.service';
 
-@ApiTags('admin users')
+@ApiTags('User administration')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(RolesGuard)
 @Roles(UserRole.ADMIN)
 @Controller('admin/users')
 export class AdminUsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly service: UsersService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List user accounts (administrators only)' })
-  @ApiResponse({ status: 200, description: 'Safe user account fields' })
+  @ApiOperation({ summary: 'List user accounts for administrative review.' })
+  @ApiResponse({ status: 200, description: 'Safe account fields only.' })
   listUsers(@Query('limit') limit?: string) {
     const parsed = Number(limit);
-    return this.usersService.listUsers(
-      Number.isFinite(parsed) && parsed > 0 ? parsed : 50,
-    );
+    return this.service.listUsers(Number.isFinite(parsed) && parsed > 0 ? parsed : 50);
   }
 
   @Patch(':userId/role')
-  @ApiOperation({
-    summary: 'Assign a user role (administrators only)',
-    description: 'Requires an active administrator access token.',
-  })
+  @ApiOperation({ summary: 'Assign an account role; administrators only.' })
   @ApiParam({ name: 'userId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Role changed' })
-  @ApiResponse({ status: 403, description: 'Administrator role required' })
-  @ApiResponse({ status: 409, description: 'The last active administrator cannot be demoted' })
+  @ApiResponse({ status: 200, description: 'Role changed and active sessions revoked.' })
+  @ApiResponse({ status: 409, description: 'The last active administrator cannot be demoted.' })
   setRole(
-    @CurrentUser() actor: AuthenticatedUser,
-    @Param('userId', ParseUUIDPipe) targetId: string,
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
     @Body() dto: SetUserRoleDto,
   ) {
-    return this.usersService.setRole(actor.id, targetId, dto.role);
+    return this.service.setRole(admin, userId, dto.role);
   }
 
   @Patch(':userId/status')
-  @ApiOperation({
-    summary: 'Suspend, activate, or deactivate a user',
-    description: 'Requires an active administrator access token.',
-  })
-  @ApiParam({ name: 'userId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Account status changed' })
-  @ApiResponse({ status: 409, description: 'The last active administrator cannot be disabled' })
-  setStatus(
-    @CurrentUser() actor: AuthenticatedUser,
-    @Param('userId', ParseUUIDPipe) targetId: string,
-    @Body() dto: SetUserStatusDto,
+  @ApiOperation({ summary: 'Change an account status; does not grant or change roles.' })
+  updateStatus(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: UpdateAccountStatusDto,
   ) {
-    return this.usersService.setStatus(actor.id, targetId, dto.status);
+    return this.service.updateAccountStatus(admin, userId, dto);
   }
 }

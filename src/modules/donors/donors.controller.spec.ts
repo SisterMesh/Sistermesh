@@ -1,16 +1,15 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { RolesGuard } from '../../common/auth/roles.guard';
+import { RolesGuard } from '../../common/roles.guard';
 import { DonorsController } from './donors.controller';
 import { DonorsService } from './donors.service';
 
 describe('DonorsController validation', () => {
   let app: INestApplication;
   const donorsService = {
-    getOwnProfile: jest.fn(),
-    updateOwnProfile: jest.fn(),
+    getMine: jest.fn(),
+    updateMine: jest.fn(),
   };
 
   beforeAll(async () => {
@@ -18,10 +17,9 @@ describe('DonorsController validation', () => {
       controllers: [DonorsController],
       providers: [
         { provide: DonorsService, useValue: donorsService },
-        RolesGuard,
       ],
     })
-      .overrideGuard(JwtAuthGuard)
+      .overrideGuard(RolesGuard)
       .useValue({
         canActivate: (context: {
           switchToHttp: () => { getRequest: () => { user?: unknown } };
@@ -29,6 +27,7 @@ describe('DonorsController validation', () => {
           context.switchToHttp().getRequest().user = {
             id: 'donor-id',
             role: 'DONOR',
+            status: 'ACTIVE',
             displayName: 'Donor',
             phoneNumber: '+2348012345678',
           };
@@ -50,7 +49,7 @@ describe('DonorsController validation', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    donorsService.updateOwnProfile.mockResolvedValue({ userId: 'donor-id' });
+    donorsService.updateMine.mockResolvedValue({ userId: 'donor-id' });
   });
 
   afterAll(async () => {
@@ -62,7 +61,7 @@ describe('DonorsController validation', () => {
       .patch('/api/donors/me')
       .send({ bloodGroup: 'INVALID', userId: 'other-user' })
       .expect(400);
-    expect(donorsService.updateOwnProfile).not.toHaveBeenCalled();
+    expect(donorsService.updateMine).not.toHaveBeenCalled();
   });
 
   it('accepts a valid profile update for the authenticated donor', async () => {
@@ -70,8 +69,8 @@ describe('DonorsController validation', () => {
       .patch('/api/donors/me')
       .send({ bloodGroup: 'O_POSITIVE', locality: 'Rumuola', isAvailable: true })
       .expect(200);
-    expect(donorsService.updateOwnProfile).toHaveBeenCalledWith(
-      'donor-id',
+    expect(donorsService.updateMine).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'donor-id' }),
       {
         bloodGroup: 'O_POSITIVE',
         locality: 'Rumuola',

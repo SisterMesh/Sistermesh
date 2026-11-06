@@ -1,47 +1,29 @@
-import {
-  Controller,
-  Get,
-  Param,
-  ParseUUIDPipe,
-  UseGuards,
-} from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import { AuthenticatedUser } from '../../common/auth/authenticated-user';
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
+import { Controller, Get, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { PublicRoute } from '../../common/public-route.decorator';
+import { Roles } from '../../common/roles.decorator';
+import { RolesGuard } from '../../common/roles.guard';
 import { FacilitiesService } from './facilities.service';
 
-@ApiTags('facilities')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@ApiTags('Facilities')
 @Controller('facilities')
 export class FacilitiesController {
-  constructor(private readonly facilitiesService: FacilitiesService) {}
+  constructor(private readonly service: FacilitiesService) {}
 
   @Get()
-  @ApiOperation({
-    summary: 'List active facilities; administrators can also see pending facilities',
-  })
-  @ApiResponse({ status: 200, description: 'Facility summaries' })
-  list(@CurrentUser() user: AuthenticatedUser) {
-    return this.facilitiesService.listForUser(user);
+  @PublicRoute()
+  @ApiOperation({ summary: 'List facilities with public location details.' })
+  list() {
+    return this.service.list();
   }
 
   @Get(':facilityId')
-  @ApiOperation({ summary: 'Get a facility the user is authorised to access' })
-  @ApiParam({ name: 'facilityId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Facility details' })
-  @ApiResponse({ status: 403, description: 'Health worker is not assigned to this facility' })
-  get(
-    @Param('facilityId', ParseUUIDPipe) facilityId: string,
-    @CurrentUser() user: AuthenticatedUser,
-  ) {
-    return this.facilitiesService.getForUser(facilityId, user);
+  @ApiBearerAuth()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Administrator only: retrieve full details of an active facility.' })
+  getPublic(@Param('facilityId', ParseUUIDPipe) facilityId: string) {
+    return this.service.getPublicById(facilityId);
   }
 }

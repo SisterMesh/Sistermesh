@@ -144,8 +144,9 @@ model HealthWorkerProfile {
   userId                String                       @unique @db.Uuid
   facilityId            String?                      @db.Uuid
   designation           String?
-  professionalIdentifier String?                      @unique
+  professionalId          String?                      @unique @map("professionalIdentifier")
   verificationStatus    HealthWorkerVerificationStatus @default(PENDING)
+  verifiedAt            DateTime?
   createdAt             DateTime                     @default(now())
   updatedAt             DateTime                     @updatedAt
   user                  User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -161,7 +162,7 @@ model Facility {
   facilityType         String?
   address              String?
   locality             String?
-  localGovernmentArea  String?
+  lga                  String?        @map("localGovernmentArea")
   state                String?
   contactPhone         String?
   status               FacilityStatus @default(PENDING)
@@ -173,7 +174,7 @@ model Facility {
 
   @@index([name])
   @@index([state, locality])
-  @@index([state, localGovernmentArea])
+  @@index([state, lga])
   @@index([status, state])
 }
 

@@ -1,26 +1,26 @@
-import { Body, Controller, Patch, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import { AuthenticatedUser } from '../../common/auth/authenticated-user';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AuthenticatedUser, CurrentUser } from '../../common/authenticated-user';
+import { RolesGuard } from '../../common/roles.guard';
+import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
 import { UsersService } from './users.service';
 
-@ApiTags('users')
+@ApiTags('Users')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(RolesGuard)
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly service: UsersService) {}
+
+  @Get('me')
+  @ApiOperation({ summary: 'Retrieve the authenticated user’s own account and profile summary.' })
+  getMine(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.getMine(user);
+  }
 
   @Patch('me')
-  @ApiOperation({ summary: 'Update the authenticated user name or phone number' })
-  @ApiResponse({ status: 200, description: 'Updated account details' })
-  @ApiResponse({ status: 409, description: 'Phone number is already in use' })
-  updateOwnProfile(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: UpdateUserDto,
-  ) {
-    return this.usersService.updateOwnProfile(user.id, dto);
+  @ApiOperation({ summary: 'Update the authenticated user’s display name or phone number.' })
+  updateMine(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateUserProfileDto) {
+    return this.service.updateMine(user, dto);
   }
 }

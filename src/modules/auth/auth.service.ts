@@ -4,100 +4,160 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { AccountStatus, Prisma, UserRole } from '@prisma/client';
+import {
+  AccountStatus,
+  Prisma,
+  UserRole,
+} from '@prisma/client';
 import * as argon2 from 'argon2';
+import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'node:crypto';
-import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
-import { ChangePasswordDto } from './dto/change-password.dto';
+import { AccessTokenService } from './access-token.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDonorDto } from './dto/register-donor.dto';
+import { RegisterHealthWorkerDto } from './dto/register-health-worker.dto';
 import { RegisterDto } from './dto/register.dto';
-import { deriveJwtKey } from '../../common/auth/token-keys';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { REFRESH_TOKEN_TTL_SECONDS } from './refresh-cookie';
 
-const publicUserSelect = {
+const BCRYPT_COST = 12;
+
+const PUBLIC_USER_SELECT = {
   id: true,
   role: true,
+  status: true,
   displayName: true,
   phoneNumber: true,
-  createdAt: true,
+  donorProfile: {
+    select: {
+      id: true,
+      bloodGroup: true,
+      isAvailable: true,
+      locality: true,
+      isProfileComplete: true,
+    },
+  },
+  healthWorkerProfile: {
+    select: {
+      id: true,
+      designation: true,
+      professionalId: true,
+      verificationStatus: true,
+      verifiedAt: true,
+      facilityId: true,
+    },
+  },
 } satisfies Prisma.UserSelect;
 
-export type PublicUser = Prisma.UserGetPayload<{
-  select: typeof publicUserSelect;
-}>;
+type PublicUserRecord = Prisma.UserGetPayload<{ select: typeof PUBLIC_USER_SELECT }>;
 
 export interface AuthSession {
   accessToken: string;
-  expiresIn: number;
   refreshToken: string;
-  user: PublicUser;
+  user: PublicUserRecord;
 }
-
-const ACCESS_TOKEN_SECONDS = 15 * 60;
-const REFRESH_TOKEN_DAYS = 30;
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
-  ) {
-    deriveJwtKey('access');
-    deriveJwtKey('refresh');
-  }
+    private readonly accessTokens: AccessTokenService,
+  ) {}
 
   async register(dto: RegisterDto): Promise<AuthSession> {
-    if (
-      dto.role !== UserRole.DONOR &&
-      dto.role !== UserRole.HEALTH_WORKER
-    ) {
-      throw new BadRequestException(
-        'Only donor and health-worker roles can register publicly.',
-      );
+    if (dto.role !== UserRole.DONOR && dto.role !== UserRole.HEALTH_WORKER) {
+      throw new BadRequestException('Only donor and health-worker roles can register.');
     }
-
-    const existing = await this.prisma.user.findUnique({
-      where: { phoneNumber: dto.phoneNumber },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new ConflictException('An account with this phone number already exists.');
-    }
-
-    const passwordHash = await argon2.hash(dto.password, {
-      type: argon2.argon2id,
-      memoryCost: 65_536,
-      timeCost: 3,
-      parallelism: 1,
-    });
-
+    this.validateRegistration(dto.displayName, dto.password);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
     try {
-      const user = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.user.create({
-          data: {
-            displayName: dto.displayName.trim(),
-            phoneNumber: dto.phoneNumber,
-            passwordHash,
-            role: dto.role as UserRole,
-          },
-          select: publicUserSelect,
-        });
-
-        if (dto.role === UserRole.DONOR) {
-          await tx.donorProfile.create({ data: { userId: created.id } });
-        } else {
-          await tx.healthWorkerProfile.create({
-            data: { userId: created.id },
-          });
-        }
-        return created;
+      const user = await this.prisma.user.create({
+        data: {
+          role: dto.role as UserRole,
+          status: AccountStatus.ACTIVE,
+          displayName: dto.displayName.trim(),
+          phoneNumber: dto.phoneNumber,
+          passwordHash,
+          ...(dto.role === UserRole.DONOR
+            ? {
+                donorProfile: {
+                  create: { bloodGroup: null, isProfileComplete: false },
+                },
+              }
+            : {
+                healthWorkerProfile: {
+                  create: { verificationStatus: 'PENDING', facilityId: null },
+                },
+              }),
+        },
+        select: PUBLIC_USER_SELECT,
       });
       return this.createSession(user);
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
+      if (this.isUniqueConstraint(error)) {
         throw new ConflictException('An account with this phone number already exists.');
+      }
+      throw error;
+    }
+  }
+
+  async registerDonor(dto: RegisterDonorDto): Promise<AuthSession> {
+    this.validateRegistration(dto.displayName, dto.password);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          role: UserRole.DONOR,
+          status: AccountStatus.ACTIVE,
+          displayName: dto.displayName.trim(),
+          phoneNumber: dto.phoneNumber,
+          passwordHash,
+          donorProfile: {
+            create: {
+              bloodGroup: dto.bloodGroup,
+              locality: dto.locality?.trim() || null,
+               isProfileComplete: Boolean(dto.bloodGroup && dto.locality?.trim()),
+            },
+          },
+        },
+        select: PUBLIC_USER_SELECT,
+      });
+      return this.createSession(user);
+    } catch (error) {
+      if (this.isUniqueConstraint(error)) {
+        throw new ConflictException('An account already uses this phone number or profile identifier.');
+      }
+      throw error;
+    }
+  }
+
+  async registerHealthWorker(dto: RegisterHealthWorkerDto): Promise<AuthSession> {
+    this.validateRegistration(dto.displayName, dto.password);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          role: UserRole.HEALTH_WORKER,
+          status: AccountStatus.ACTIVE,
+          displayName: dto.displayName.trim(),
+          phoneNumber: dto.phoneNumber,
+          passwordHash,
+          healthWorkerProfile: {
+            create: {
+              designation: dto.designation?.trim() || null,
+              professionalId: dto.professionalId?.trim() || null,
+              verificationStatus: 'PENDING',
+              facilityId: null,
+            },
+          },
+        },
+        select: PUBLIC_USER_SELECT,
+      });
+      return this.createSession(user);
+    } catch (error) {
+      if (this.isUniqueConstraint(error)) {
+        throw new ConflictException('An account already uses this phone number or professional ID.');
       }
       throw error;
     }
@@ -106,103 +166,94 @@ export class AuthService {
   async login(dto: LoginDto): Promise<AuthSession> {
     const user = await this.prisma.user.findUnique({
       where: { phoneNumber: dto.phoneNumber },
-      select: {
-        ...publicUserSelect,
-        status: true,
-        passwordHash: true,
-      },
+      select: { ...PUBLIC_USER_SELECT, passwordHash: true },
     });
-
     if (
       !user ||
-      user.status !== AccountStatus.ACTIVE ||
       !user.passwordHash ||
+      user.status !== AccountStatus.ACTIVE ||
       !(await this.verifyPassword(dto.password, user.passwordHash))
     ) {
-      throw new UnauthorizedException('Invalid phone number or password.');
+      throw new UnauthorizedException('Phone number or password is incorrect.');
     }
-
-    const publicUser: PublicUser = {
+    const safeUser: PublicUserRecord = {
       id: user.id,
       role: user.role,
+      status: user.status,
       displayName: user.displayName,
       phoneNumber: user.phoneNumber,
-      createdAt: user.createdAt,
+      donorProfile: user.donorProfile,
+      healthWorkerProfile: user.healthWorkerProfile,
     };
-    return this.createSession(publicUser);
+    return this.createSession(safeUser);
   }
 
-  async rotateRefreshToken(token: string): Promise<AuthSession> {
-    const currentHash = this.hashRefreshToken(token);
-    const nextToken = randomBytes(32).toString('base64url');
+  async refresh(rawToken: string): Promise<AuthSession> {
+    const tokenHash = this.hashRefreshToken(rawToken);
+    const current = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+      include: { user: { select: PUBLIC_USER_SELECT } },
+    });
     const now = new Date();
-    const expiresAt = new Date(
-      now.getTime() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000,
-    );
-
-    const rotation = await this.prisma.$transaction(async (tx) => {
-      const current = await tx.refreshToken.findUnique({
-        where: { tokenHash: currentHash },
-        include: {
-          user: {
-            select: {
-              ...publicUserSelect,
-              status: true,
-            },
-          },
-        },
-      });
-      if (!current || current.revokedAt || current.expiresAt <= now) return null;
-
-      const revoked = await tx.refreshToken.updateMany({
-        where: {
-          id: current.id,
-          revokedAt: null,
-          expiresAt: { gt: now },
-        },
+    if (!current) throw new UnauthorizedException('Refresh session is invalid or expired.');
+    if (current.revokedAt) {
+      await this.prisma.refreshToken.updateMany({
+        where: { userId: current.userId, revokedAt: null },
         data: { revokedAt: now },
       });
-      if (revoked.count !== 1) return null;
-      if (current.user.status !== AccountStatus.ACTIVE) return null;
+      throw new UnauthorizedException('Refresh session is invalid or expired.');
+    }
+    if (current.expiresAt <= now || current.user.status !== AccountStatus.ACTIVE) {
+      await this.prisma.refreshToken.updateMany({
+        where: { id: current.id, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      throw new UnauthorizedException('Refresh session is invalid or expired.');
+    }
 
+    const nextToken = this.newRefreshToken();
+    const rotated = await this.prisma.$transaction(async (tx) => {
+      const revoked = await tx.refreshToken.updateMany({
+        where: { id: current.id, revokedAt: null, expiresAt: { gt: now } },
+        data: { revokedAt: now },
+      });
+      if (!revoked.count) {
+        await tx.refreshToken.updateMany({
+          where: { userId: current.userId, revokedAt: null },
+          data: { revokedAt: now },
+        });
+        return false;
+      }
       await tx.refreshToken.create({
         data: {
           userId: current.userId,
           tokenHash: this.hashRefreshToken(nextToken),
-          expiresAt,
+          expiresAt: new Date(now.getTime() + REFRESH_TOKEN_TTL_SECONDS * 1000),
         },
       });
-      const publicUser: PublicUser = {
-        id: current.user.id,
-        role: current.user.role,
-        displayName: current.user.displayName,
-        phoneNumber: current.user.phoneNumber,
-        createdAt: current.user.createdAt,
-      };
-      return { user: publicUser, refreshToken: nextToken };
+      return true;
     });
-
-    if (!rotation) {
-      throw new UnauthorizedException('Invalid or expired refresh token.');
-    }
-    return this.createAccessSession(rotation.user, rotation.refreshToken);
+    if (!rotated) throw new UnauthorizedException('Refresh session is invalid or expired.');
+    return {
+      accessToken: await this.accessTokens.issue(current.userId),
+      refreshToken: nextToken,
+      user: current.user,
+    };
   }
 
-  async logout(token?: string): Promise<void> {
-    if (!token) return;
+  rotateRefreshToken(rawToken: string): Promise<AuthSession> {
+    return this.refresh(rawToken);
+  }
+
+  async logout(rawToken?: string): Promise<void> {
+    if (!rawToken) return;
     await this.prisma.refreshToken.updateMany({
-      where: {
-        tokenHash: this.hashRefreshToken(token),
-        revokedAt: null,
-      },
+      where: { tokenHash: this.hashRefreshToken(rawToken), revokedAt: null },
       data: { revokedAt: new Date() },
     });
   }
 
-  async changePassword(
-    userId: string,
-    dto: ChangePasswordDto,
-  ): Promise<void> {
+  async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { passwordHash: true, status: true },
@@ -215,13 +266,8 @@ export class AuthService {
     ) {
       throw new UnauthorizedException('Current password is incorrect.');
     }
-
-    const passwordHash = await argon2.hash(dto.newPassword, {
-      type: argon2.argon2id,
-      memoryCost: 65_536,
-      timeCost: 3,
-      parallelism: 1,
-    });
+    this.validateRegistration('valid', dto.newPassword);
+    const passwordHash = await bcrypt.hash(dto.newPassword, BCRYPT_COST);
     const now = new Date();
     await this.prisma.$transaction([
       this.prisma.user.update({
@@ -235,48 +281,42 @@ export class AuthService {
     ]);
   }
 
-  async getCurrentUser(userId: string): Promise<PublicUser> {
+  async getProfile(userId: string): Promise<PublicUserRecord> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: publicUserSelect,
+      select: PUBLIC_USER_SELECT,
     });
-    if (!user) throw new UnauthorizedException('Account is no longer available.');
+    if (!user || user.status !== AccountStatus.ACTIVE) {
+      throw new UnauthorizedException('The account is not active.');
+    }
     return user;
   }
 
-  private async createSession(user: PublicUser): Promise<AuthSession> {
-    const refreshToken = randomBytes(32).toString('base64url');
+  private async createSession(user: PublicUserRecord): Promise<AuthSession> {
+    const refreshToken = this.newRefreshToken();
     await this.prisma.refreshToken.create({
       data: {
         userId: user.id,
         tokenHash: this.hashRefreshToken(refreshToken),
-        expiresAt: new Date(
-          Date.now() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000,
-        ),
+        expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000),
       },
     });
-    return this.createAccessSession(user, refreshToken);
-  }
-
-  private createAccessSession(
-    user: PublicUser,
-    refreshToken: string,
-  ): AuthSession {
-    const accessToken = jwt.sign(
-      { sub: user.id, tokenType: 'access' },
-      deriveJwtKey('access'),
-      {
-        expiresIn: ACCESS_TOKEN_SECONDS,
-        issuer: 'sistermesh-api',
-        audience: 'sistermesh-clients',
-      },
-    );
     return {
-      accessToken,
-      expiresIn: ACCESS_TOKEN_SECONDS,
+      accessToken: await this.accessTokens.issue(user.id),
       refreshToken,
       user,
     };
+  }
+
+  private newRefreshToken(): string {
+    return randomBytes(48).toString('base64url');
+  }
+
+  private validateRegistration(displayName: string, password: string): void {
+    if (!displayName.trim()) throw new BadRequestException('Display name is required.');
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      throw new BadRequestException('Password must not exceed 72 UTF-8 bytes.');
+    }
   }
 
   private hashRefreshToken(token: string): string {
@@ -285,9 +325,17 @@ export class AuthService {
 
   private async verifyPassword(password: string, hash: string): Promise<boolean> {
     try {
-      return await argon2.verify(hash, password);
+      if (hash.startsWith('$argon2')) {
+        return await argon2.verify(hash, password);
+      }
+      if (Buffer.byteLength(password, 'utf8') > 72) return false;
+      return await bcrypt.compare(password, hash);
     } catch {
       return false;
     }
+  }
+
+  private isUniqueConstraint(error: unknown): error is Prisma.PrismaClientKnownRequestError {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
   }
 }

@@ -1,13 +1,12 @@
 import { Module } from '@nestjs/common';
-import { AuthModule } from '../auth/auth.module';
-import { PrismaModule } from '../prisma/prisma.module';
+import { RolesGuard } from '../../common/roles.guard';
 import { AdminHealthWorkersController } from './admin-health-workers.controller';
 import { HealthWorkersController } from './health-workers.controller';
 import { HealthWorkersService } from './health-workers.service';
 
 @Module({
-  imports: [AuthModule, PrismaModule],
   controllers: [HealthWorkersController, AdminHealthWorkersController],
-  providers: [HealthWorkersService],
+  providers: [HealthWorkersService, RolesGuard],
+  exports: [HealthWorkersService],
 })
 export class HealthWorkersModule {}

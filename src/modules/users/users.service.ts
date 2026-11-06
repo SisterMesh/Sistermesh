@@ -1,13 +1,11 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AccountStatus, Prisma, UserRole } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/authenticated-user';
 import { PrismaService } from '../prisma/prisma.service';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
+import { UpdateAccountStatusDto } from './dto/update-account-status.dto';
 
-const safeUserSelect = {
+const USER_PROFILE_SELECT = {
   id: true,
   role: true,
   status: true,
@@ -21,32 +19,45 @@ const safeUserSelect = {
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async updateOwnProfile(userId: string, dto: UpdateUserDto) {
-    try {
-      return await this.prisma.user.update({
-        where: { id: userId },
-        data: {
-          ...(dto.displayName !== undefined && {
-            displayName: dto.displayName.trim(),
-          }),
-          ...(dto.phoneNumber !== undefined && {
-            phoneNumber: dto.phoneNumber,
-          }),
+  async getMine(user: AuthenticatedUser) {
+    const record = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: {
+        ...USER_PROFILE_SELECT,
+        donorProfile: { select: { id: true, bloodGroup: true, isAvailable: true, locality: true, isProfileComplete: true } },
+        healthWorkerProfile: {
+          select: {
+            id: true,
+            designation: true,
+            professionalId: true,
+            verificationStatus: true,
+            verifiedAt: true,
+            facilityId: true,
+          },
         },
-        select: safeUserSelect,
+      },
+    });
+    if (!record || record.status !== AccountStatus.ACTIVE) throw new NotFoundException('User profile not found.');
+    return record;
+  }
+
+  async updateMine(user: AuthenticatedUser, dto: UpdateUserProfileDto) {
+    const data: Prisma.UserUpdateInput = {};
+    if (dto.displayName !== undefined) data.displayName = dto.displayName.trim();
+    if (dto.phoneNumber !== undefined) data.phoneNumber = dto.phoneNumber;
+    if (!Object.keys(data).length) throw new ConflictException('Provide at least one profile field to update.');
+
+    try {
+      const updated = await this.prisma.user.update({
+        where: { id: user.id },
+        data,
+        select: USER_PROFILE_SELECT,
       });
+      if (updated.status !== AccountStatus.ACTIVE) throw new ForbiddenException('This account is not active.');
+      return updated;
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException('That phone number is already in use.');
-      }
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2025'
-      ) {
-        throw new NotFoundException('Account not found.');
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('An account already uses this phone number.');
       }
       throw error;
     }
@@ -56,142 +67,144 @@ export class UsersService {
     return this.prisma.user.findMany({
       take: Math.min(Math.max(limit, 1), 100),
       orderBy: { createdAt: 'desc' },
-      select: safeUserSelect,
+      select: USER_PROFILE_SELECT,
     });
   }
 
-  async setRole(actorId: string, targetId: string, role: UserRole) {
-    return this.adminTransaction(async (tx) => {
-      const target = await tx.user.findUnique({
-        where: { id: targetId },
-        select: { id: true, role: true, status: true },
-      });
-      if (!target) throw new NotFoundException('Account not found.');
-
-      if (
-        target.role === UserRole.ADMIN &&
-        target.status === AccountStatus.ACTIVE &&
-        role !== UserRole.ADMIN
-      ) {
-        const activeAdmins = await tx.user.count({
-          where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE },
+  async setRole(admin: AuthenticatedUser | string, userId: string, role: UserRole) {
+    const actorId = typeof admin === 'string' ? admin : admin.id;
+    return this.prisma.$transaction(
+      async (tx) => {
+        const target = await tx.user.findUnique({
+          where: { id: userId },
+          select: USER_PROFILE_SELECT,
         });
-        if (activeAdmins <= 1) {
-          throw new ConflictException('The last active administrator cannot be demoted.');
+        if (!target) throw new NotFoundException('User account not found.');
+        if (
+          target.role === UserRole.ADMIN &&
+          target.status === AccountStatus.ACTIVE &&
+          role !== UserRole.ADMIN
+        ) {
+          const activeAdmins = await tx.user.count({
+            where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE },
+          });
+          if (activeAdmins <= 1) {
+            throw new ConflictException('The last active administrator cannot be demoted.');
+          }
         }
-      }
+        if (target.role === role) return target;
 
-      const updated = await tx.user.update({
-        where: { id: targetId },
-        data: { role },
-        select: safeUserSelect,
-      });
-      if (role === UserRole.DONOR) {
-        await tx.donorProfile.upsert({
-          where: { userId: targetId },
-          create: { userId: targetId },
-          update: {},
+        const updated = await tx.user.update({
+          where: { id: userId },
+          data: { role },
+          select: USER_PROFILE_SELECT,
         });
-      } else if (role === UserRole.HEALTH_WORKER) {
-        await tx.healthWorkerProfile.upsert({
-          where: { userId: targetId },
-          create: { userId: targetId },
-          update:
-            target.role === UserRole.HEALTH_WORKER
-              ? {}
-              : {
-                  facilityId: null,
-                  verificationStatus: 'PENDING',
-                },
-        });
-      }
-      if (
-        target.role === UserRole.HEALTH_WORKER &&
-        role !== UserRole.HEALTH_WORKER
-      ) {
-        await tx.healthWorkerProfile.updateMany({
-          where: { userId: targetId },
-          data: {
-            facilityId: null,
-            verificationStatus: 'PENDING',
-          },
-        });
-      }
-      await tx.auditLog.create({
-        data: {
-          actorUserId: actorId,
-          action: 'USER_ROLE_CHANGED',
-          entityType: 'User',
-          entityId: targetId,
-          metadata: { previousRole: target.role, role },
-        },
-      });
-      return updated;
-    });
-  }
-
-  async setStatus(actorId: string, targetId: string, status: AccountStatus) {
-    return this.adminTransaction(async (tx) => {
-      const target = await tx.user.findUnique({
-        where: { id: targetId },
-        select: { id: true, role: true, status: true },
-      });
-      if (!target) throw new NotFoundException('Account not found.');
-
-      if (
-        target.role === UserRole.ADMIN &&
-        target.status === AccountStatus.ACTIVE &&
-        status !== AccountStatus.ACTIVE
-      ) {
-        const activeAdmins = await tx.user.count({
-          where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE },
-        });
-        if (activeAdmins <= 1) {
-          throw new ConflictException('The last active administrator cannot be disabled.');
+        if (role === UserRole.DONOR) {
+          await tx.donorProfile.upsert({
+            where: { userId },
+            create: { userId, bloodGroup: null, isProfileComplete: false },
+            update: {},
+          });
+        } else if (role === UserRole.HEALTH_WORKER) {
+          await tx.healthWorkerProfile.upsert({
+            where: { userId },
+            create: { userId, verificationStatus: 'PENDING', facilityId: null },
+            update:
+              target.role === UserRole.HEALTH_WORKER
+                ? {}
+                : {
+                    facilityId: null,
+                    verificationStatus: 'PENDING',
+                    verifiedAt: null,
+                  },
+          });
         }
-      }
-
-      const updated = await tx.user.update({
-        where: { id: targetId },
-        data: { status },
-        select: safeUserSelect,
-      });
-      if (status !== AccountStatus.ACTIVE) {
+        if (
+          target.role === UserRole.HEALTH_WORKER &&
+          role !== UserRole.HEALTH_WORKER
+        ) {
+          await tx.healthWorkerProfile.updateMany({
+            where: { userId },
+            data: {
+              facilityId: null,
+              verificationStatus: 'PENDING',
+              verifiedAt: null,
+            },
+          });
+        }
         await tx.refreshToken.updateMany({
-          where: { userId: targetId, revokedAt: null },
+          where: { userId, revokedAt: null },
           data: { revokedAt: new Date() },
         });
-      }
-      await tx.auditLog.create({
-        data: {
-          actorUserId: actorId,
-          action: 'USER_STATUS_CHANGED',
-          entityType: 'User',
-          entityId: targetId,
-          metadata: { previousStatus: target.status, status },
-        },
-      });
-      return updated;
-    });
+        await tx.auditLog.create({
+          data: {
+            actorUserId: actorId,
+            action: 'USER_ROLE_CHANGED',
+            entityType: 'User',
+            entityId: userId,
+            metadata: { previousRole: target.role, role },
+          },
+        });
+        return updated;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
-  private async adminTransaction<T>(
-    callback: (tx: Prisma.TransactionClient) => Promise<T>,
-  ): Promise<T> {
-    try {
-      return await this.prisma.$transaction(callback, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2034'
-      ) {
-        throw new ConflictException(
-          'A concurrent administrator update occurred. Retry the operation.',
-        );
-      }
-      throw error;
+  async updateAccountStatus(admin: AuthenticatedUser, userId: string, dto: UpdateAccountStatusDto) {
+    if (admin.id === userId && dto.status !== AccountStatus.ACTIVE) {
+      throw new ConflictException('Administrators cannot suspend or deactivate their own account.');
     }
+    return this.prisma.$transaction(
+      async (tx) => {
+        const target = await tx.user.findUnique({
+          where: { id: userId },
+          select: { id: true, role: true, status: true },
+        });
+        if (!target) throw new NotFoundException('User account not found.');
+        if (target.role === UserRole.ADMIN && dto.status !== AccountStatus.ACTIVE) {
+          const activeAdmins = await tx.user.count({
+            where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE },
+          });
+          if (activeAdmins <= 1) {
+            throw new ConflictException('The last active administrator cannot be suspended or deactivated.');
+          }
+        }
+        const updated = await tx.user.update({
+          where: { id: userId },
+          data: { status: dto.status },
+          select: USER_PROFILE_SELECT,
+        });
+        if (dto.status !== AccountStatus.ACTIVE) {
+          await tx.refreshToken.updateMany({
+            where: { userId, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+        }
+        await tx.auditLog.create({
+          data: {
+            actorUserId: admin.id,
+            action: 'USER_ACCOUNT_STATUS_CHANGED',
+            entityType: 'User',
+            entityId: userId,
+            metadata: { fromStatus: target.status, toStatus: dto.status },
+          },
+        });
+        return updated;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  setStatus(adminId: string, userId: string, status: AccountStatus) {
+    return this.updateAccountStatus(
+      {
+        id: adminId,
+        role: UserRole.ADMIN,
+        status: AccountStatus.ACTIVE,
+      },
+      userId,
+      { status },
+    );
   }
 }

@@ -1,14 +1,14 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
+import { RolesGuard } from '../../common/roles.guard';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
 describe('UsersController account ownership', () => {
   let app: INestApplication;
   const usersService = {
-    updateOwnProfile: jest.fn().mockResolvedValue({
+    updateMine: jest.fn().mockResolvedValue({
       id: 'current-user',
       displayName: 'Updated Name',
       phoneNumber: '+2348012345678',
@@ -21,7 +21,7 @@ describe('UsersController account ownership', () => {
       controllers: [UsersController],
       providers: [{ provide: UsersService, useValue: usersService }],
     })
-      .overrideGuard(JwtAuthGuard)
+      .overrideGuard(RolesGuard)
       .useValue({
         canActivate: (context: {
           switchToHttp: () => { getRequest: () => { user?: unknown } };
@@ -29,6 +29,7 @@ describe('UsersController account ownership', () => {
           context.switchToHttp().getRequest().user = {
             id: 'current-user',
             role: 'DONOR',
+            status: 'ACTIVE',
             displayName: 'Current User',
             phoneNumber: '+2348012345678',
           };
@@ -60,8 +61,8 @@ describe('UsersController account ownership', () => {
       .expect(({ body }) => {
         expect(body.id).toBe('current-user');
       });
-    expect(usersService.updateOwnProfile).toHaveBeenCalledWith(
-      'current-user',
+    expect(usersService.updateMine).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'current-user' }),
       { displayName: 'Updated Name' },
     );
   });
@@ -71,6 +72,6 @@ describe('UsersController account ownership', () => {
       .patch('/api/users/another-user-id')
       .send({ displayName: 'Unauthorized Change' })
       .expect(404);
-    expect(usersService.updateOwnProfile).toHaveBeenCalledTimes(1);
+    expect(usersService.updateMine).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,126 +2,113 @@ import {
   Body,
   Controller,
   Get,
-  Header,
   HttpCode,
   HttpStatus,
   Patch,
   Post,
   Req,
   Res,
-  UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiBody,
-  ApiCookieAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import { Request, Response } from 'express';
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import { AuthenticatedUser } from '../../common/auth/authenticated-user';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
+import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { AuthenticatedUser, CurrentUser } from '../../common/authenticated-user';
+import { PublicRoute } from '../../common/public-route.decorator';
 import { AuthService, AuthSession } from './auth.service';
-import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDonorDto } from './dto/register-donor.dto';
+import { RegisterHealthWorkerDto } from './dto/register-health-worker.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import {
+  clearRefreshCookie,
+  getRefreshCookie,
+  setRefreshCookie,
+} from './refresh-cookie';
 
-const REFRESH_COOKIE = 'sistermesh_refresh';
-const REFRESH_COOKIE_PATH = '/api/auth';
-const REFRESH_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+interface HeaderResponse {
+  setHeader(name: string, value: string): void;
+}
 
-@ApiTags('authentication')
+interface CookieRequest {
+  headers: { cookie?: string };
+}
+
+@ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'Register a donor or health-worker account' })
-  @ApiBody({ type: RegisterDto })
-  @ApiResponse({ status: 201, description: 'Account created and signed in' })
-  @ApiResponse({ status: 400, description: 'Invalid registration details' })
-  @ApiResponse({ status: 409, description: 'Phone number is already registered' })
-  async register(
-    @Body() dto: RegisterDto,
-    @Res({ passthrough: true }) response: Response,
+  @PublicRoute()
+  @ApiOperation({ summary: 'Register a donor or health-worker account.' })
+  @ApiResponse({ status: 201, description: 'Account created with its role-specific profile.' })
+  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) response: HeaderResponse) {
+    return this.sessionResponse(await this.authService.register(dto), response);
+  }
+
+  @Post('register/donor')
+  @PublicRoute()
+  @ApiOperation({ summary: 'Register a donor account and donor profile; role is assigned by the server.' })
+  @ApiResponse({ status: 201, description: 'Account created; response contains an access token and safe user profile.' })
+  @ApiResponse({ status: 409, description: 'Phone number is already registered.' })
+  async registerDonor(@Body() dto: RegisterDonorDto, @Res({ passthrough: true }) response: HeaderResponse) {
+    return this.sessionResponse(await this.authService.registerDonor(dto), response);
+  }
+
+  @Post('register/health-worker')
+  @PublicRoute()
+  @ApiOperation({ summary: 'Register a health worker with pending professional verification.' })
+  @ApiResponse({ status: 201, description: 'Account created in pending verification state.' })
+  async registerHealthWorker(
+    @Body() dto: RegisterHealthWorkerDto,
+    @Res({ passthrough: true }) response: HeaderResponse,
   ) {
-    const session = await this.authService.register(dto);
-    this.setRefreshCookie(response, session.refreshToken);
-    return this.responseBody(session);
+    return this.sessionResponse(await this.authService.registerHealthWorker(dto), response);
   }
 
   @Post('login')
-  @Header('Cache-Control', 'no-store')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Sign in with phone number and password' })
-  @ApiBody({ type: LoginDto })
-  @ApiResponse({ status: 200, description: 'Signed in successfully' })
-  @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  async login(
-    @Body() dto: LoginDto,
-    @Res({ passthrough: true }) response: Response,
-  ) {
-    const session = await this.authService.login(dto);
-    this.setRefreshCookie(response, session.refreshToken);
-    return this.responseBody(session);
+  @PublicRoute()
+  @ApiOperation({ summary: 'Authenticate with phone number and password.' })
+  @ApiResponse({ status: 401, description: 'Phone number or password is incorrect.' })
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: HeaderResponse) {
+    return this.sessionResponse(await this.authService.login(dto), response);
   }
 
   @Post('refresh')
-  @Header('Cache-Control', 'no-store')
   @HttpCode(HttpStatus.OK)
-  @ApiCookieAuth('sistermesh_refresh')
-  @ApiOperation({
-    summary: 'Rotate the refresh cookie and issue a new access token',
-  })
-  @ApiResponse({ status: 200, description: 'Tokens rotated successfully' })
-  @ApiResponse({ status: 401, description: 'Refresh cookie is invalid or expired' })
-  async refresh(
-    @Req() request: Request,
-    @Res({ passthrough: true }) response: Response,
-  ) {
-    const refreshToken = this.getRefreshCookie(request);
-    if (!refreshToken) {
-      return this.authService.rotateRefreshToken('');
-    }
-    const session = await this.authService.rotateRefreshToken(refreshToken);
-    this.setRefreshCookie(response, session.refreshToken);
-    return this.responseBody(session);
+  @PublicRoute()
+  @ApiCookieAuth('refreshCookie')
+  @ApiOperation({ summary: 'Rotate the HttpOnly refresh session and return a new access token.' })
+  @ApiResponse({ status: 401, description: 'Refresh session is missing, expired, revoked, or invalid.' })
+  async refresh(@Req() request: CookieRequest, @Res({ passthrough: true }) response: HeaderResponse) {
+    const token = getRefreshCookie(request);
+    if (!token) throw new UnauthorizedException('Refresh session is invalid or expired.');
+    return this.sessionResponse(await this.authService.rotateRefreshToken(token), response);
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiCookieAuth('sistermesh_refresh')
-  @ApiOperation({ summary: 'Revoke the refresh cookie and sign out' })
-  @ApiResponse({ status: 204, description: 'Signed out' })
-  async logout(
-    @Req() request: Request,
-    @Res({ passthrough: true }) response: Response,
-  ): Promise<void> {
-    await this.authService.logout(this.getRefreshCookie(request));
-    response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
+  @PublicRoute()
+  @ApiCookieAuth('refreshCookie')
+  @ApiOperation({ summary: 'Revoke the current refresh session and clear its cookie.' })
+  async logout(@Req() request: CookieRequest, @Res({ passthrough: true }) response: HeaderResponse) {
+    await this.authService.logout(getRefreshCookie(request));
+    clearRefreshCookie(response);
   }
 
   @Get('me')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Return the authenticated user profile' })
-  @ApiResponse({ status: 200, description: 'Current account details' })
-  @ApiResponse({ status: 401, description: 'Access token is invalid or expired' })
-  me(@CurrentUser() user: AuthenticatedUser) {
-    return this.authService.getCurrentUser(user.id);
+  @ApiOperation({ summary: 'Retrieve the authenticated user and their own profile.' })
+  @ApiResponse({ status: 401, description: 'A valid access token is required.' })
+  profile(@CurrentUser() user: AuthenticatedUser) {
+    return this.authService.getProfile(user.id);
   }
 
   @Patch('password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Change the authenticated user password' })
-  @ApiBody({ type: ChangePasswordDto })
-  @ApiResponse({ status: 204, description: 'Password changed; sessions revoked' })
-  @ApiResponse({ status: 401, description: 'Current password is incorrect' })
+  @ApiOperation({ summary: 'Change the authenticated account password and revoke refresh sessions.' })
+  @ApiResponse({ status: 204, description: 'Password changed and refresh sessions revoked.' })
   async changePassword(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ChangePasswordDto,
@@ -129,41 +116,8 @@ export class AuthController {
     await this.authService.changePassword(user.id, dto);
   }
 
-  private responseBody({ refreshToken: _refreshToken, ...body }: AuthSession) {
-    return body;
-  }
-
-  private setRefreshCookie(response: Response, token: string): void {
-    response.cookie(REFRESH_COOKIE, token, {
-      ...this.cookieOptions(),
-      maxAge: REFRESH_MAX_AGE_MS,
-    });
-  }
-
-  private cookieOptions() {
-    return {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict' as const,
-      path: REFRESH_COOKIE_PATH,
-    };
-  }
-
-  private getRefreshCookie(request: Request): string | undefined {
-    const cookieHeader = request.headers.cookie;
-    if (!cookieHeader) return undefined;
-    for (const part of cookieHeader.split(';')) {
-      const separator = part.indexOf('=');
-      if (separator < 0) continue;
-      const name = part.slice(0, separator).trim();
-      if (name === REFRESH_COOKIE) {
-        try {
-          return decodeURIComponent(part.slice(separator + 1).trim());
-        } catch {
-          return undefined;
-        }
-      }
-    }
-    return undefined;
+  private sessionResponse(session: AuthSession, response: HeaderResponse) {
+    setRefreshCookie(response, session.refreshToken);
+    return { accessToken: session.accessToken, user: session.user };
   }
 }

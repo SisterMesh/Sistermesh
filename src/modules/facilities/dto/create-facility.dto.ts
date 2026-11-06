@@ -1,50 +1,41 @@
-import {
-  IsOptional,
-  IsString,
-  Matches,
-  MaxLength,
-  MinLength,
-} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class CreateFacilityDto {
-  @ApiProperty({ example: 'Port Harcourt Women’s Hospital', maxLength: 160 })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @ApiProperty({ maxLength: 160 })
   @IsString()
-  @MinLength(2)
   @MaxLength(160)
   name!: string;
 
-  @ApiPropertyOptional({ example: 'Hospital', maxLength: 80 })
+  @ApiPropertyOptional({ maxLength: 80 })
   @IsOptional()
   @IsString()
   @MaxLength(80)
   facilityType?: string;
 
-  @ApiPropertyOptional({ example: 'Rumuola Road', maxLength: 240 })
+  @ApiPropertyOptional({ maxLength: 240 })
   @IsOptional()
   @IsString()
   @MaxLength(240)
   address?: string;
 
-  @ApiPropertyOptional({ example: 'Rumuola', maxLength: 120 })
+  @ApiPropertyOptional({ maxLength: 120 })
   @IsOptional()
   @IsString()
   @MaxLength(120)
   locality?: string;
 
-  @ApiPropertyOptional({ example: 'Obio/Akpor', maxLength: 120 })
+  @ApiPropertyOptional({ maxLength: 120 })
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  localGovernmentArea?: string;
+  state?: string;
 
-  @ApiPropertyOptional({ example: 'Rivers', maxLength: 100 })
+  @ApiPropertyOptional({ maxLength: 120 })
   @IsOptional()
   @IsString()
-  @MaxLength(100)
-  state?: string;
+  @MaxLength(120)
+  lga?: string;
 
   @ApiPropertyOptional({ example: '+2348012345678' })
   @IsOptional()

@@ -1,21 +1,16 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateHealthWorkerProfileDto {
-  @ApiPropertyOptional({ example: 'Nurse', minLength: 2, maxLength: 100 })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @ApiPropertyOptional({ maxLength: 120 })
   @IsOptional()
   @IsString()
-  @MinLength(2)
-  @MaxLength(100)
+  @MaxLength(120)
   designation?: string;
 
-  @ApiPropertyOptional({ example: 'NMCN-123456', minLength: 2, maxLength: 100 })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @ApiPropertyOptional({ maxLength: 120, description: 'Changing this after verification resets verification.' })
   @IsOptional()
   @IsString()
-  @MinLength(2)
-  @MaxLength(100)
-  professionalIdentifier?: string;
+  @MaxLength(120)
+  professionalId?: string | null;
 }

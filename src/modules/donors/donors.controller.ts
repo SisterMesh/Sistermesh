@@ -1,43 +1,36 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import { AuthenticatedUser } from '../../common/auth/authenticated-user';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { Roles } from '../../common/auth/roles.decorator';
-import { RolesGuard } from '../../common/auth/roles.guard';
+import { AuthenticatedUser, CurrentUser } from '../../common/authenticated-user';
+import { Roles } from '../../common/roles.decorator';
+import { RolesGuard } from '../../common/roles.guard';
+import { CreateDonorProfileDto } from './dto/create-donor-profile.dto';
 import { UpdateDonorProfileDto } from './dto/update-donor-profile.dto';
 import { DonorsService } from './donors.service';
 
-@ApiTags('donors')
+@ApiTags('Donor profiles')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(RolesGuard)
 @Roles(UserRole.DONOR)
 @Controller('donors')
 export class DonorsController {
-  constructor(private readonly donorsService: DonorsService) {}
+  constructor(private readonly service: DonorsService) {}
+
+  @Post('me')
+  @ApiOperation({ summary: 'Create the signed-in donor’s profile if it does not already exist.' })
+  createMine(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateDonorProfileDto) {
+    return this.service.createMine(user, dto);
+  }
 
   @Get('me')
-  @ApiOperation({ summary: 'Get the authenticated donor profile' })
-  @ApiResponse({ status: 200, description: 'Donor profile; precise location is not stored' })
-  @ApiResponse({ status: 403, description: 'Donor role required' })
-  getOwnProfile(@CurrentUser() user: AuthenticatedUser) {
-    return this.donorsService.getOwnProfile(user.id);
+  @ApiOperation({ summary: 'Retrieve the signed-in donor’s profile.' })
+  getMine(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.getMine(user);
   }
 
   @Patch('me')
-  @ApiOperation({ summary: 'Update donor blood group, locality, or availability' })
-  @ApiResponse({ status: 200, description: 'Updated donor profile' })
-  @ApiResponse({ status: 400, description: 'Invalid profile details' })
-  updateOwnProfile(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: UpdateDonorProfileDto,
-  ) {
-    return this.donorsService.updateOwnProfile(user.id, dto);
+  @ApiOperation({ summary: 'Update the signed-in donor’s blood group, locality, or availability.' })
+  updateMine(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateDonorProfileDto) {
+    return this.service.updateMine(user, dto);
   }
 }

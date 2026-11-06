@@ -1,61 +1,54 @@
-import {
-  Body,
-  Controller,
-  Param,
-  ParseUUIDPipe,
-  Patch,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { Roles } from '../../common/auth/roles.decorator';
-import { RolesGuard } from '../../common/auth/roles.guard';
-import { AssignFacilityDto } from './dto/assign-facility.dto';
-import { SetVerificationStatusDto } from './dto/set-verification-status.dto';
+import { AuthenticatedUser, CurrentUser } from '../../common/authenticated-user';
+import { Roles } from '../../common/roles.decorator';
+import { RolesGuard } from '../../common/roles.guard';
+import { AssignWorkerFacilityDto } from './dto/assign-worker-facility.dto';
+import { ListHealthWorkersQueryDto } from './dto/list-health-workers-query.dto';
+import { UpdateWorkerVerificationDto } from './dto/update-worker-verification.dto';
 import { HealthWorkersService } from './health-workers.service';
 
-@ApiTags('admin health workers')
+@ApiTags('Health worker administration')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(RolesGuard)
 @Roles(UserRole.ADMIN)
 @Controller('admin/health-workers')
 export class AdminHealthWorkersController {
-  constructor(private readonly healthWorkersService: HealthWorkersService) {}
+  @Get()
+  @ApiOperation({ summary: 'Administrator only: list workers awaiting verification or filter by status.' })
+  list(@Query() query: ListHealthWorkersQueryDto) {
+    return this.service.listForAdmin(query);
+  }
+
+  constructor(private readonly service: HealthWorkersService) {}
 
   @Patch(':userId/verification')
-  @ApiOperation({
-    summary: 'Verify or reject a health-worker profile',
-    description: 'Requires an active administrator access token.',
-  })
-  @ApiParam({ name: 'userId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Verification status updated' })
-  @ApiResponse({ status: 403, description: 'Administrator role required' })
-  setVerificationStatus(
+  @ApiOperation({ summary: 'Verify or reject a health worker’s professional profile.' })
+  setVerification(
+    @CurrentUser() admin: AuthenticatedUser,
     @Param('userId', ParseUUIDPipe) userId: string,
-    @Body() dto: SetVerificationStatusDto,
+    @Body() dto: UpdateWorkerVerificationDto,
   ) {
-    return this.healthWorkersService.setVerificationStatus(userId, dto.status);
+    return this.service.setVerification(admin, userId, dto);
   }
 
   @Patch(':userId/facility')
-  @ApiOperation({
-    summary: 'Associate a health worker with an active facility',
-    description: 'Requires an active administrator access token.',
-  })
-  @ApiParam({ name: 'userId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Facility association updated' })
-  @ApiResponse({ status: 403, description: 'Administrator role or active facility required' })
+  @ApiOperation({ summary: 'Assign a verified health worker to an active facility.' })
   assignFacility(
+    @CurrentUser() admin: AuthenticatedUser,
     @Param('userId', ParseUUIDPipe) userId: string,
-    @Body() dto: AssignFacilityDto,
+    @Body() dto: AssignWorkerFacilityDto,
   ) {
-    return this.healthWorkersService.assignFacility(userId, dto);
+    return this.service.assignFacility(admin, userId, dto);
+  }
+
+  @Delete(':userId/facility')
+  @ApiOperation({ summary: 'Remove a health worker’s facility assignment.' })
+  removeFacility(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ) {
+    return this.service.removeFacilityAssignment(admin, userId);
   }
 }

@@ -8,84 +8,65 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import { AuthenticatedUser } from '../../common/auth/authenticated-user';
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { Roles } from '../../common/auth/roles.decorator';
-import { RolesGuard } from '../../common/auth/roles.guard';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FacilityStatus, UserRole } from '@prisma/client';
+import { AuthenticatedUser, CurrentUser } from '../../common/authenticated-user';
+import { Roles } from '../../common/roles.decorator';
+import { RolesGuard } from '../../common/roles.guard';
 import { CreateFacilityDto } from './dto/create-facility.dto';
-import { SetFacilityStatusDto } from './dto/set-facility-status.dto';
 import { UpdateFacilityDto } from './dto/update-facility.dto';
+import { UpdateFacilityStatusDto } from './dto/update-facility-status.dto';
 import { FacilitiesService } from './facilities.service';
 
-@ApiTags('admin facilities')
+@ApiTags('Facility administration')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(RolesGuard)
 @Roles(UserRole.ADMIN)
 @Controller('admin/facilities')
 export class AdminFacilitiesController {
-  constructor(private readonly facilitiesService: FacilitiesService) {}
+  constructor(private readonly service: FacilitiesService) {}
 
   @Post()
-  @ApiOperation({
-    summary: 'Register a facility for administrative approval',
-    description: 'Requires an active administrator access token; new facilities start PENDING.',
-  })
-  @ApiResponse({ status: 201, description: 'Facility created with PENDING status' })
-  @ApiResponse({ status: 403, description: 'Administrator role required' })
-  create(
-    @CurrentUser() actor: AuthenticatedUser,
-    @Body() dto: CreateFacilityDto,
-  ) {
-    return this.facilitiesService.create(actor.id, dto);
+  @ApiOperation({ summary: 'Register a facility in pending status.' })
+  create(@CurrentUser() admin: AuthenticatedUser, @Body() dto: CreateFacilityDto) {
+    return this.service.create(admin, dto);
   }
 
-  @Patch(':facilityId')
-  @ApiOperation({
-    summary: 'Update facility information',
-    description: 'Requires an active administrator access token.',
-  })
-  @ApiParam({ name: 'facilityId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Facility updated' })
-  update(
-    @CurrentUser() actor: AuthenticatedUser,
-    @Param('facilityId', ParseUUIDPipe) facilityId: string,
-    @Body() dto: UpdateFacilityDto,
-  ) {
-    return this.facilitiesService.update(actor.id, facilityId, dto);
+  @Get()
+  @ApiOperation({ summary: 'List all facilities for administrators.' })
+  list() {
+    return this.service.listForAdmin();
   }
 
-  @Patch(':facilityId/status')
-  @ApiOperation({
-    summary: 'Approve, reject, activate, or disable a facility',
-    description: 'Requires an active administrator access token.',
-  })
-  @ApiParam({ name: 'facilityId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Facility status updated' })
-  setStatus(
-    @CurrentUser() actor: AuthenticatedUser,
-    @Param('facilityId', ParseUUIDPipe) facilityId: string,
-    @Body() dto: SetFacilityStatusDto,
-  ) {
-    return this.facilitiesService.setStatus(actor.id, facilityId, dto.status);
+  @Get(':facilityId')
+  @ApiOperation({ summary: 'Retrieve full facility details for administrators.' })
+  get(@Param('facilityId', ParseUUIDPipe) facilityId: string) {
+    return this.service.getForAdmin(facilityId);
   }
 
   @Get(':facilityId/health-workers')
-  @ApiOperation({
-    summary: 'List health workers associated with a facility',
-    description: 'Requires an active administrator access token.',
-  })
-  @ApiParam({ name: 'facilityId', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Associated health-worker summaries' })
-  getHealthWorkers(@Param('facilityId', ParseUUIDPipe) facilityId: string) {
-    return this.facilitiesService.getHealthWorkers(facilityId);
+  @ApiOperation({ summary: 'List health workers associated with a facility.' })
+  listWorkers(@Param('facilityId', ParseUUIDPipe) facilityId: string) {
+    return this.service.listHealthWorkers(facilityId);
+  }
+
+  @Patch(':facilityId')
+  @ApiOperation({ summary: 'Update facility details without changing approval status.' })
+  update(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('facilityId', ParseUUIDPipe) facilityId: string,
+    @Body() dto: UpdateFacilityDto,
+  ) {
+    return this.service.update(admin, facilityId, dto);
+  }
+
+  @Patch(':facilityId/status')
+  @ApiOperation({ summary: 'Approve or deactivate a facility.' })
+  updateStatus(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('facilityId', ParseUUIDPipe) facilityId: string,
+    @Body() dto: UpdateFacilityStatusDto,
+  ) {
+    return this.service.updateStatus(admin, facilityId, dto.status as FacilityStatus);
   }
 }

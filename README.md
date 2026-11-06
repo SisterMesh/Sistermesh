@@ -1,9 +1,8 @@
 # SisterMesh Backend
 
-NestJS and Prisma backend foundation for the SisterMesh Android application.
-The first phase contains the API health check, Swagger documentation, and
-initial relational schema only. Authentication and donor-coordination business
-endpoints are not implemented yet.
+NestJS and Prisma backend for the SisterMesh Android application. It provides
+password-based authentication, role-scoped user and facility management,
+emergency coordination APIs, and Swagger documentation.
 
 ## Configuration
 
@@ -18,8 +17,48 @@ npm run prisma:generate
 npm run start:dev
 ```
 
-The API is served under `/api`; Swagger UI is at `/api/docs`, and the health
-check is `GET /api/health`.
+The API is served under `/api`; Swagger UI is at `/api/docs`, and the public
+health check is `GET /api/health`.
+
+## Authentication and profiles
+
+- Donors register at `POST /api/auth/register/donor`; health workers register
+  at `POST /api/auth/register/health-worker`.
+- `POST /api/auth/login` returns a short-lived access token. A rotating refresh
+  token is stored in an HttpOnly, Secure cookie and is never returned in JSON.
+- `POST /api/auth/refresh` rotates that cookie; `POST /api/auth/logout` revokes
+  the presented refresh session.
+- Send access tokens as `Authorization: Bearer <token>`. `GET /api/auth/me` and
+  `GET/PATCH /api/users/me` operate on the authenticated account only.
+- Donor profiles use `GET/POST/PATCH /api/donors/me`; health worker profiles use
+  `GET/POST/PATCH /api/health-workers/me`.
+- Health workers register as unverified and are not assigned a facility until
+  an administrator verifies and associates them.
+
+## Facilities and authorization
+
+- `GET /api/facilities` and `GET /api/facilities/:facilityId` expose public
+  details for active facilities.
+- Administrators manage facilities under `/api/admin/facilities` and verify or
+  associate workers under `/api/admin/health-workers`.
+- New facilities require administrator approval. Only verified health workers
+  assigned to active facilities can use facility-scoped coordination routes.
+- Registration never accepts a role field and there is no public admin
+  registration route. Initial administrator provisioning is an operator task.
+
+## Coordination endpoints
+
+- Health workers create and manage facility requests under
+  `/api/emergency-requests`, including status, cancellation, and activity
+  history.
+- Donors view compatible active requests at `GET
+  /api/emergency-requests/eligible`, submit one response per request at
+  `POST /api/donor-responses/:requestId`, and list responses at
+  `GET /api/donor-responses/mine`.
+- Health workers confirm a donation at
+  `POST /api/emergency-requests/:requestId/donations/confirm`.
+- Request creation uses a UUID `clientRequestId`; donor responses and donation
+  confirmations use UUID `idempotencyKey` values.
 
 ## Database
 
@@ -63,4 +102,4 @@ npm run test:db
 npm run build
 ```
 
-The database connectivity test requires `DATABASE_URL`.
+The database connectivity and migration checks require `DATABASE_URL`.

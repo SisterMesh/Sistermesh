@@ -1,54 +1,71 @@
 import {
-  FacilityStatus,
+  AccountStatus,
   HealthWorkerVerificationStatus,
   UserRole,
 } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/authenticated-user';
+import { PrismaService } from '../prisma/prisma.service';
 import { HealthWorkersService } from './health-workers.service';
 
 describe('HealthWorkersService', () => {
-  it('resets verification when a professional identifier changes', async () => {
-    const prisma = {
-      healthWorkerProfile: {
-        findUnique: jest.fn().mockResolvedValue({
-          professionalIdentifier: 'OLD-123',
-        }),
-        upsert: jest.fn().mockResolvedValue({ verificationStatus: 'PENDING' }),
-      },
+  const worker: AuthenticatedUser = {
+    id: '00000000-0000-4000-8000-000000000071',
+    role: UserRole.HEALTH_WORKER,
+    status: 'ACTIVE',
+  };
+
+  it('creates a worker profile pending admin verification and without facility authority', async () => {
+    const profile = {
+      id: '00000000-0000-4000-8000-000000000072',
+      userId: worker.id,
+      facilityId: null,
+      verificationStatus: HealthWorkerVerificationStatus.PENDING,
     };
-    const service = new HealthWorkersService(prisma as never);
-
-    await service.updateOwnProfile('worker-id', {
-      professionalIdentifier: 'NEW-456',
-    });
-
-    expect(prisma.healthWorkerProfile.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: 'worker-id' },
-        update: expect.objectContaining({
-          professionalIdentifier: 'NEW-456',
-          verificationStatus: HealthWorkerVerificationStatus.PENDING,
+    const prismaMock = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: worker.id,
+          role: UserRole.HEALTH_WORKER,
+          status: AccountStatus.ACTIVE,
         }),
-      }),
-    );
+      },
+      healthWorkerProfile: { create: jest.fn().mockResolvedValue(profile) },
+    };
+    const service = new HealthWorkersService(prismaMock as unknown as PrismaService);
+
+    await expect(service.createMine(worker, { professionalId: 'LIC-123', designation: 'Nurse' })).resolves.toBe(profile);
+    expect(prismaMock.healthWorkerProfile.create.mock.calls[0][0].data).toMatchObject({
+      userId: worker.id,
+      professionalId: 'LIC-123',
+      verificationStatus: HealthWorkerVerificationStatus.PENDING,
+    });
+    expect(prismaMock.healthWorkerProfile.create.mock.calls[0][0].data.facilityId).toBeUndefined();
   });
 
-  it('rejects assignment to an inactive facility', async () => {
-    const prisma = {
+  it('does not permit verification without a professional identifier', async () => {
+    const prismaMock = {
       user: {
-        findUnique: jest.fn().mockResolvedValue({ role: UserRole.HEALTH_WORKER }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: worker.id,
+          role: UserRole.HEALTH_WORKER,
+          status: AccountStatus.ACTIVE,
+          healthWorkerProfile: {
+            id: '00000000-0000-4000-8000-000000000073',
+            professionalId: null,
+          },
+        }),
       },
-      facility: {
-        findUnique: jest.fn().mockResolvedValue({ status: FacilityStatus.INACTIVE }),
-      },
-      healthWorkerProfile: { upsert: jest.fn() },
+      $transaction: jest.fn(),
     };
-    const service = new HealthWorkersService(prisma as never);
+    const service = new HealthWorkersService(prismaMock as unknown as PrismaService);
 
     await expect(
-      service.assignFacility('worker-id', {
-        facilityId: '2c2f8854-a8d4-466c-8e4a-13b59f53ef2e',
-      }),
-    ).rejects.toMatchObject({ status: 403 });
-    expect(prisma.healthWorkerProfile.upsert).not.toHaveBeenCalled();
+      service.setVerification(
+        { id: '00000000-0000-4000-8000-000000000074', role: UserRole.ADMIN, status: 'ACTIVE' },
+        worker.id,
+        { verificationStatus: HealthWorkerVerificationStatus.VERIFIED },
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });
