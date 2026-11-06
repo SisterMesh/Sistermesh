@@ -13,6 +13,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -106,6 +107,74 @@ class MeshRepositoryTest {
         } finally {
             sourceDb.close()
             relayDb.close()
+        }
+    }
+
+    @Test
+    fun trustedPeerKeyCannotBeSilentlyReplaced() = runBlocking {
+        val database = inMemoryDatabase()
+        try {
+            val meshRepository = MeshRepository(database, TestMeshSigner())
+            val peerId = UUID.randomUUID().toString()
+            val firstKey = TestMeshSigner()
+            val replacementKey = TestMeshSigner()
+            assertTrue(meshRepository.pinDirectPeer(firstKey.identity(peerId)))
+            assertFalse(meshRepository.pinDirectPeer(replacementKey.identity(peerId)))
+            assertEquals(
+                firstKey.identity(peerId).publicKeyBase64,
+                database.trustedMeshPeerDao().get(peerId)?.publicKeyBase64
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun relayForwardsAcrossTwoThreeAndFourDevicesWithoutChangingOrigin() = runBlocking {
+        for (deviceCount in 2..4) {
+            val databases = (0 until deviceCount).map { inMemoryDatabase() }
+            try {
+                val appRepositories = databases.mapIndexed { index, database ->
+                    if (index == 0) configuredWorker(database) else SisterMeshRepository(database).also { it.initialize() }
+                }
+                appRepositories.first().createRequest("AB+", Urgency.CRITICAL, 3, "private note")
+                val event = appRepositories.first().observeAllEvents().first().single { it.eventType == "request.create" }
+                val signers = (0 until deviceCount).map { TestMeshSigner() }
+                val meshRepositories = databases.mapIndexed { index, database ->
+                    MeshRepository(database, signers[index])
+                }
+                val deviceIds = meshRepositories.map { it.localDeviceId() }
+                val originId = deviceIds.first()
+                meshRepositories.first().ensureOutgoing(event)
+                val original = databases.first().meshMessageDao().get(event.eventId)!!
+
+                for (hop in 0 until deviceCount - 1) {
+                    val senderMesh = meshRepositories[hop]
+                    val receiverMesh = meshRepositories[hop + 1]
+                    assertTrue(senderMesh.pinDirectPeer(signers[hop + 1].identity(deviceIds[hop + 1])))
+                    assertTrue(receiverMesh.pinDirectPeer(signers[hop].identity(deviceIds[hop])))
+
+                    val bytes = senderMesh.prepareEventForPeer(event.eventId, deviceIds[hop + 1])
+                    assertNotNull(bytes)
+                    val packet = (MeshCodec.decode(bytes!!) as MeshWirePacket.Event).event
+                    senderMesh.recordEventAttempt(event.eventId, deviceIds[hop + 1])
+                    senderMesh.recordEventTransmitted(event.eventId, deviceIds[hop + 1])
+                    val received = receiverMesh.receiveEvent(packet, deviceIds[hop])
+                    assertTrue("hop ${hop + 1} of $deviceCount", received.stored)
+                    assertNull(receiverMesh.prepareEventForPeer(event.eventId, deviceIds[hop]))
+                }
+
+                val finalMessage = databases.last().meshMessageDao().get(event.eventId)
+                assertNotNull(finalMessage)
+                assertEquals(originId, finalMessage?.originDeviceId)
+                assertEquals(original.originSignature, finalMessage?.originSignature)
+                assertEquals(original.payloadJson, finalMessage?.payloadJson)
+                assertEquals(original.originCreatedAt, finalMessage?.originCreatedAt)
+                assertFalse(finalMessage?.payloadJson.orEmpty().contains("private note"))
+                assertEquals(deviceCount - 1, finalMessage?.hopCount)
+            } finally {
+                databases.forEach { it.close() }
+            }
         }
     }
 

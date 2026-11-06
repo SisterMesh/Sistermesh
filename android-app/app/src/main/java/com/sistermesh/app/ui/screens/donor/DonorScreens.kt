@@ -83,6 +83,13 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
         if (handled.isNotEmpty()) {
             SectionTitle("Recent activity", action = "See all") { nav.navigate("history") }
             handled.take(3).forEach { r ->
+                val eventType = when (r.decision) {
+                    Decision.ACCEPTED -> "donor-response.accept"
+                    Decision.DECLINED -> "donor-response.decline"
+                    Decision.WITHDRAWN -> "donor.withdraw"
+                    else -> ""
+                }
+                val delivery = vm.meshState.messageDeliveryStates["$eventType:${r.id}"]
                 SmCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BloodBadge(r.bloodGroup, 40.dp, Fog, Muted)
@@ -97,6 +104,20 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
                             r.decision == Decision.WITHDRAWN -> Tag("Withdrawn", Tone.Neutral, Icons.Rounded.Close)
                             else -> Tag("You declined", Tone.Neutral, Icons.Rounded.Close)
                         }
+                    }
+                    if (delivery != null) {
+                        Text(
+                            when (delivery) {
+                                "DELIVERED" -> "The intended device confirmed receipt."
+                                "STORED_BY_PEER" -> "A nearby peer stored your response; destination delivery is not confirmed."
+                                "RELAYED" -> "Your response was relayed; destination delivery is not confirmed."
+                                "TRANSMITTED" -> "Nearby transport accepted the send; no peer receipt yet."
+                                "EXPIRED" -> "The response expired before delivery was confirmed."
+                                else -> "Your response is waiting for a nearby connection."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Muted
+                        )
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -172,7 +193,7 @@ fun IncomingRequestScreen(vm: AppViewModel, nav: NavController, id: String) {
         }
         Spacer(Modifier.height(16.dp))
         Notice(
-            "Saying yes shares only your pseudonym and approximate area. Your phone number and exact location stay private.",
+            "Your response shares only a short device pseudonym and your choice. Your name, phone number, and location stay private.",
             Icons.Rounded.Lock, Tone.Good
         )
         Spacer(Modifier.height(12.dp))

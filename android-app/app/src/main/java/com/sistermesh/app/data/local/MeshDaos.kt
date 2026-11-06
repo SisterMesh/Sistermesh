@@ -73,6 +73,9 @@ interface MeshForwardingHistoryDao {
 
     @Query("SELECT * FROM mesh_forwarding_history WHERE messageId = :messageId AND peerDeviceId = :peerDeviceId LIMIT 1")
     suspend fun get(messageId: String, peerDeviceId: String): MeshForwardingHistoryEntity?
+
+    @Query("UPDATE mesh_forwarding_history SET status = 'FAILED', error = 'Interrupted before send confirmation' WHERE status = 'SENDING'")
+    suspend fun recoverInterruptedSends()
 }
 
 @Dao
@@ -91,6 +94,9 @@ interface MeshAcknowledgementDao {
 
     @Query("UPDATE mesh_acknowledgements SET deliveryState = :state WHERE acknowledgementId = :acknowledgementId")
     suspend fun setState(acknowledgementId: String, state: String)
+
+    @Query("UPDATE mesh_acknowledgements SET deliveryState = 'RETRY' WHERE deliveryState = 'SENDING'")
+    suspend fun recoverInterruptedSends()
 }
 
 @Dao

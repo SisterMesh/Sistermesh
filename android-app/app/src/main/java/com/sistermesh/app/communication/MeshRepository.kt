@@ -135,12 +135,12 @@ class MeshRepository(
         val localId = localDeviceId()
         val row = messages.get(messageId) ?: return null
         val now = Instant.now()
-        if (!runCatching { Instant.parse(row.expiresAt).isAfter(now) }.getOrDefault(false)) {
+        val relayDecision = RelayPolicy.decide(row.toPacket(), localId, peerDeviceId, seen = false, now = now)
+        if (relayDecision == RelayPolicy.Decision.Expired) {
             messages.setState(messageId, "EXPIRED", null)
             return null
         }
-        if (row.hopCount >= row.maxHops || peerDeviceId == row.receivedFromDeviceId) return null
-        if (row.targetDeviceId == localId) return null
+        if (relayDecision != RelayPolicy.Decision.Forward) return null
         val priorAttempt = history.get(messageId, peerDeviceId)
         if (priorAttempt != null) {
             val retryAfter = runCatching { Instant.parse(priorAttempt.forwardedAt).plusSeconds(60) }.getOrNull()
@@ -362,6 +362,11 @@ class MeshRepository(
         routes.deleteExpired(now.toString())
     }
 
+    suspend fun recoverInterruptedTransfers() {
+        history.recoverInterruptedSends()
+        acknowledgements.recoverInterruptedSends()
+    }
+
     private suspend fun validateOrigin(
         packet: MeshEventPacket,
         senderDeviceId: String,
@@ -381,6 +386,9 @@ class MeshRepository(
             return "Origin event signature is invalid."
         }
         if (packet.originDeviceId == senderDeviceId) {
+            if (packet.relayAttestorDeviceId != null || packet.relayAttestationSignature != null) {
+                return "An origin event cannot carry a relay attestation."
+            }
             if (sender.publicKeyBase64 != packet.originPublicKey) return "Direct peer key does not match the event origin."
         } else {
             if (packet.relayAttestorDeviceId != senderDeviceId || packet.relayAttestationSignature.isNullOrBlank()) {
@@ -486,6 +494,7 @@ class MeshRepository(
                         units = payload.getInt("units"),
                         facility = packet.displayFacility ?: "Nearby health facility",
                         createdAt = packet.originCreatedAt,
+                        updatedAt = packet.originCreatedAt,
                         status = RequestStatus.SEARCHING.name,
                         receivedAt = "Just now",
                         expiresIn = "Expires in 30 min",

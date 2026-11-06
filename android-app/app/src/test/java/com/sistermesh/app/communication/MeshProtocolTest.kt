@@ -23,14 +23,13 @@ class MeshProtocolTest {
     fun relaySupportsTwoThreeAndFourDevicePathsWithoutChangingOriginEvent() {
         val origin = TestMeshSigner()
         val now = Instant.now()
-        val originId = UUID.randomUUID().toString()
         val eventId = UUID.randomUUID().toString()
 
         for (deviceCount in 2..4) {
             val deviceIds = (0 until deviceCount).map { UUID.randomUUID().toString() }
             val base = event(
                 origin,
-                originId,
+                deviceIds.first(),
                 eventId,
                 target = deviceIds.last(),
                 now = now
@@ -104,11 +103,31 @@ class MeshProtocolTest {
         val tampered = packet.copy(payloadJson = packet.payloadJson.replace("\"units\":2", "\"units\":3"))
         assertFalse(signer.verify(tampered.originPublicKey, MeshCanonical.event(tampered), tampered.originSignature))
 
-        val relayed = packet.copy(
+        val relayId = UUID.randomUUID().toString()
+        val relay = TestMeshSigner()
+        val relayIdentity = relay.identity(relayId)
+        val unsignedRelayed = packet.copy(
             hopCount = 2,
             previousHopDeviceId = UUID.randomUUID().toString(),
-            relayAttestorDeviceId = UUID.randomUUID().toString(),
-            relayAttestationSignature = "relay-proof"
+            relayAttestorDeviceId = relayId,
+            relayAttestationSignature = null
+        )
+        val relayed = unsignedRelayed.copy(
+            relayAttestationSignature = relay.sign(MeshCanonical.relayAttestation(unsignedRelayed))
+        )
+        assertTrue(
+            relay.verify(
+                relayIdentity.publicKeyBase64,
+                MeshCanonical.relayAttestation(relayed),
+                relayed.relayAttestationSignature!!
+            )
+        )
+        assertFalse(
+            relay.verify(
+                relayIdentity.publicKeyBase64,
+                MeshCanonical.relayAttestation(relayed.copy(hopCount = 3)),
+                relayed.relayAttestationSignature!!
+            )
         )
         val decoded = MeshCodec.decode(MeshCodec.encodeEvent(relayed)) as MeshWirePacket.Event
         assertEquals(relayed, decoded.event)

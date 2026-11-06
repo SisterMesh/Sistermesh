@@ -11,7 +11,9 @@ import com.sistermesh.app.data.local.TrustedMeshPeerEntity
 import com.sistermesh.app.data.local.SyncEventEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,6 +33,7 @@ data class MeshNetworkUiState(
     val trustedPeers: List<TrustedMeshPeerEntity> = emptyList(),
     val pendingMessages: Int = 0,
     val requestDeliveryStates: Map<String, String> = emptyMap(),
+    val messageDeliveryStates: Map<String, String> = emptyMap(),
     val statusText: String = "Nearby connections are paused.",
     val lastError: String? = null
 )
@@ -53,6 +56,7 @@ class NearbyConnectionsManager(
     private var foreground = false
     private var starting = false
     private var running = false
+    private var retryJob: Job? = null
 
     init {
         scope.launch {
@@ -67,7 +71,16 @@ class NearbyConnectionsManager(
                     .filter { it.originDeviceId == localId && it.eventType == "request.create" }
                     .mapNotNull { row -> row.localEntityId?.let { it to row.deliveryState } }
                     .toMap()
-                mutableState.value = mutableState.value.copy(requestDeliveryStates = statuses)
+                val eventStatuses = rows.asSequence()
+                    .filter { it.originDeviceId == localId }
+                    .mapNotNull { row ->
+                        row.localEntityId?.let { "${row.eventType}:$it" to row.deliveryState }
+                    }
+                    .toMap()
+                mutableState.value = mutableState.value.copy(
+                    requestDeliveryStates = statuses,
+                    messageDeliveryStates = eventStatuses
+                )
             }
         }
     }
@@ -76,21 +89,35 @@ class NearbyConnectionsManager(
         runCatching { repository.ensureOutgoing(event) }
             .onFailure { updateState(lastError = it.message ?: "Could not queue this nearby message.") }
         refreshPendingCount()
-        flushOutbox()
+        safelyFlushOutbox()
     }
 
     fun flushPending() {
-        scope.launch { flushOutbox() }
+        scope.launch { safelyFlushOutbox() }
     }
 
     fun onForeground() {
         foreground = true
         refreshEnvironment()
-        scope.launch { repository.cleanupExpired() }
+        scope.launch {
+            repository.cleanupExpired()
+            repository.recoverInterruptedTransfers()
+            safelyFlushOutbox()
+        }
+        if (retryJob == null) {
+            retryJob = scope.launch {
+                while (foreground) {
+                    delay(60_000)
+                    if (foreground) safelyFlushOutbox()
+                }
+            }
+        }
     }
 
     fun onBackground() {
         foreground = false
+        retryJob?.cancel()
+        retryJob = null
         stopTransport()
         updateState(
             scanning = false,
@@ -133,7 +160,7 @@ class NearbyConnectionsManager(
                 "Bluetooth is off; nearby discovery may be limited."
             }
         )
-        scope.launch { flushOutbox() }
+        scope.launch { safelyFlushOutbox() }
     }
 
     override fun onStartFailed(message: String) {
@@ -223,26 +250,34 @@ class NearbyConnectionsManager(
                         lastError = null,
                         statusText = "Connected to a trusted nearby device."
                     )
-                    flushOutbox()
+                    safelyFlushOutbox()
                 }
                 is MeshWirePacket.Event -> {
                     if (senderId == null) return@launch
-                    val result = repository.receiveEvent(wirePacket.event, senderId)
+                    val result = runCatching { repository.receiveEvent(wirePacket.event, senderId) }.getOrElse {
+                        updateState(lastError = it.message ?: "Could not store nearby message.")
+                        return@launch
+                    }
                     result.acknowledgement?.let { sendAcknowledgement(endpointId, it) }
                     if (result.error != null) updateState(lastError = result.error)
                     refreshPendingCount()
-                    flushOutbox()
+                    safelyFlushOutbox()
                 }
                 is MeshWirePacket.Acknowledgement -> {
                     if (senderId == null) return@launch
-                    val forwarded = repository.receiveAcknowledgement(wirePacket.ack, senderId)
+                    val forwarded = runCatching {
+                        repository.receiveAcknowledgement(wirePacket.ack, senderId)
+                    }.getOrElse {
+                        updateState(lastError = it.message ?: "Could not process nearby acknowledgement.")
+                        return@launch
+                    }
                     forwarded?.let { ack ->
                         endpointForDevice(ack.nextHopDeviceId)?.let { nextEndpoint ->
                             sendAcknowledgement(nextEndpoint, ack)
                         }
                     }
                     refreshPendingCount()
-                    flushOutbox()
+                    safelyFlushOutbox()
                 }
             }
         }
@@ -262,7 +297,10 @@ class NearbyConnectionsManager(
         if (running || starting) return
         starting = true
         updateState(lastError = null, statusText = "Starting nearby discovery.")
-        transport.start(this)
+        runCatching { transport.start(this) }.onFailure {
+            starting = false
+            updateState(scanning = false, lastError = it.message, statusText = "Nearby discovery could not start.")
+        }
     }
 
     private fun stopTransport() {
@@ -308,6 +346,12 @@ class NearbyConnectionsManager(
             }
         }
         refreshPendingCount()
+    }
+
+    private suspend fun safelyFlushOutbox() {
+        runCatching { flushOutbox() }.onFailure {
+            updateState(lastError = it.message ?: "Could not process the nearby queue.")
+        }
     }
 
     private fun sendAcknowledgement(endpointId: String, packet: MeshAckPacket) {

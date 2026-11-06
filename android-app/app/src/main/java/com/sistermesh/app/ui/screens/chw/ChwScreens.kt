@@ -152,7 +152,7 @@ fun BroadcastScreen(vm: AppViewModel, nav: NavController, id: String) {
     if (r == null) { Page { Spacer(Modifier.height(24.dp)); Text("This request is no longer available.") }; return }
 
     val deliveryState = vm.meshState.requestDeliveryStates[id]
-    val deliveryText = when (deliveryState) {
+    val deliveryText = vm.meshState.lastError ?: when (deliveryState) {
         "TRANSMITTED" -> "Nearby transport accepted the send. A peer receipt has not been confirmed yet."
         "STORED_BY_PEER" -> "A nearby peer confirmed it stored this message. That does not confirm delivery to the intended recipient."
         "RELAYED" -> "A nearby peer relayed this message. Destination delivery is not confirmed."

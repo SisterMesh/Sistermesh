@@ -228,7 +228,11 @@ object MeshCanonical {
             packet.messageId,
             packet.originDeviceId,
             sha256(packet.originPublicKey),
-            packet.originSignature
+            packet.originSignature,
+            packet.hopCount.toString(),
+            packet.maxHops.toString(),
+            packet.previousHopDeviceId,
+            packet.relayAttestorDeviceId
         )
     )
 
@@ -251,7 +255,11 @@ object MeshCanonical {
             packet.acknowledgementId,
             packet.messageId,
             packet.acknowledgingDeviceId,
-            sha256(packet.signature)
+            sha256(packet.signature),
+            packet.hopCount.toString(),
+            packet.maxHops.toString(),
+            packet.nextHopDeviceId,
+            packet.relayAttestorDeviceId
         )
     )
 

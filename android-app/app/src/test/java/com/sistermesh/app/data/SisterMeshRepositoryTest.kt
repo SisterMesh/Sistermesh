@@ -2,10 +2,9 @@ package com.sistermesh.app.data
 
 import android.content.Context
 import androidx.room.Room
-import androidx.room.testing.MigrationTestHelper
+import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
-import androidx.test.platform.app.InstrumentationRegistry
 import com.sistermesh.app.data.local.MIGRATION_1_2
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import kotlinx.coroutines.flow.first
@@ -24,13 +23,6 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 class SisterMeshRepositoryTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val migrationHelper by lazy {
-        MigrationTestHelper(
-            InstrumentationRegistry.getInstrumentation(),
-            SisterMeshDatabase::class.java.canonicalName!!,
-            FrameworkSQLiteOpenHelperFactory()
-        )
-    }
 
     @Test
     fun offlineRequestAndVersionOneEventAreSavedTogether() = runBlocking {
@@ -203,27 +195,62 @@ class SisterMeshRepositoryTest {
     fun versionOneDataSurvivesMeshMigrationWithoutDestructiveFallback() {
         val name = "sistermesh-migration-${UUID.randomUUID()}.db"
         context.deleteDatabase(name)
-        val versionOne = migrationHelper.createDatabase(name, 1)
-        versionOne.execSQL(
-            """
-            INSERT INTO profiles
-            (id, role, name, bloodGroup, area, phone, facility, facilityLocation, designation, isAvailable, language)
-            VALUES (1, 'CHW', 'Legacy Worker', '', '', '', 'Legacy Clinic', 'Riverside', 'Nurse', 1, 'English')
-            """.trimIndent()
-        )
-        versionOne.execSQL(
-            """
-            INSERT INTO emergency_requests
-            (localId, serverId, kind, bloodGroup, urgency, units, note, facility, createdAt, updatedAt,
-             status, devicesFound, delivered, distance, receivedAt, expiresIn, decision, confirmed, isDemo, syncStatus)
-            VALUES ('legacy-request', NULL, 'OUTGOING', 'O-', 'CRITICAL', 2, 'local note', 'Legacy Clinic',
-             '2026-01-01T00:00:00Z', NULL, 'SEARCHING', 0, 0, '', '', '', 'NONE', 0, 0, 'PENDING')
-            """.trimIndent()
-        )
-        versionOne.close()
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(name)
+                .callback(object : SupportSQLiteOpenHelper.Callback(1) {
+                    override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        db.execSQL(
+                            """
+                            CREATE TABLE profiles (
+                                id INTEGER NOT NULL PRIMARY KEY,
+                                role TEXT NOT NULL, name TEXT NOT NULL, bloodGroup TEXT NOT NULL,
+                                area TEXT NOT NULL, phone TEXT NOT NULL, facility TEXT NOT NULL,
+                                facilityLocation TEXT NOT NULL, designation TEXT NOT NULL,
+                                isAvailable INTEGER NOT NULL, language TEXT NOT NULL
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            CREATE TABLE emergency_requests (
+                                localId TEXT NOT NULL PRIMARY KEY, serverId TEXT, kind TEXT NOT NULL,
+                                bloodGroup TEXT NOT NULL, urgency TEXT NOT NULL, units INTEGER NOT NULL,
+                                note TEXT NOT NULL, facility TEXT NOT NULL, createdAt TEXT NOT NULL,
+                                updatedAt TEXT, status TEXT NOT NULL, devicesFound INTEGER NOT NULL,
+                                delivered INTEGER NOT NULL, distance TEXT NOT NULL, receivedAt TEXT NOT NULL,
+                                expiresIn TEXT NOT NULL, decision TEXT NOT NULL, confirmed INTEGER NOT NULL,
+                                isDemo INTEGER NOT NULL, syncStatus TEXT NOT NULL
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            INSERT INTO profiles
+                            (id, role, name, bloodGroup, area, phone, facility, facilityLocation, designation, isAvailable, language)
+                            VALUES (1, 'CHW', 'Legacy Worker', '', '', '', 'Legacy Clinic', 'Riverside', 'Nurse', 1, 'English')
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            INSERT INTO emergency_requests
+                            (localId, serverId, kind, bloodGroup, urgency, units, note, facility, createdAt, updatedAt,
+                             status, devicesFound, delivered, distance, receivedAt, expiresIn, decision, confirmed, isDemo, syncStatus)
+                            VALUES ('legacy-request', NULL, 'OUTGOING', 'O-', 'CRITICAL', 2, 'local note', 'Legacy Clinic',
+                             '2026-01-01T00:00:00Z', NULL, 'SEARCHING', 0, 0, '', '', '', 'NONE', 0, 0, 'PENDING')
+                            """.trimIndent()
+                        )
+                    }
 
-        val migrated = migrationHelper.runMigrationsAndValidate(name, 2, true, MIGRATION_1_2)
+                    override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+                        error("Unexpected test database upgrade.")
+                    }
+                })
+                .build()
+        )
+        val migrated = helper.writableDatabase
         try {
+            MIGRATION_1_2.migrate(migrated)
             val profile = migrated.query("SELECT name FROM profiles WHERE id = 1")
             assertTrue(profile.moveToFirst())
             assertEquals("Legacy Worker", profile.getString(0))
@@ -239,7 +266,7 @@ class SisterMeshRepositoryTest {
             assertEquals(2, meshTables.getInt(0))
             meshTables.close()
         } finally {
-            migrated.close()
+            helper.close()
             context.deleteDatabase(name)
         }
     }

@@ -94,32 +94,60 @@ class GoogleNearbyTransport(context: Context) : NearbyTransport {
 
     override fun start(listener: NearbyTransportListener) {
         this.listener = listener
-        val advertising = client.startAdvertising(
-            "SisterMesh",
-            serviceId,
-            lifecycleCallback,
-            AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-        )
-        val discovery = client.startDiscovery(
-            serviceId,
-            discoveryCallback,
-            DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
-        )
-        advertising.addOnFailureListener { listener.onStartFailed("Advertising could not start: ${it.message.orEmpty()}") }
-        discovery.addOnFailureListener { listener.onStartFailed("Nearby discovery could not start: ${it.message.orEmpty()}") }
-        advertising.addOnSuccessListener {
-            discovery.addOnSuccessListener { listener.onStarted() }
+        try {
+            val advertising = client.startAdvertising(
+                "SisterMesh",
+                serviceId,
+                lifecycleCallback,
+                AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+            )
+            val discovery = client.startDiscovery(
+                serviceId,
+                discoveryCallback,
+                DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build()
+            )
+            var advertisingReady = false
+            var discoveryReady = false
+            var reported = false
+            advertising.addOnFailureListener { listener.onStartFailed("Advertising could not start: ${it.message.orEmpty()}") }
+            discovery.addOnFailureListener { listener.onStartFailed("Nearby discovery could not start: ${it.message.orEmpty()}") }
+            advertising.addOnSuccessListener {
+                advertisingReady = true
+                if (discoveryReady && !reported) {
+                    reported = true
+                    listener.onStarted()
+                }
+            }
+            discovery.addOnSuccessListener {
+                discoveryReady = true
+                if (advertisingReady && !reported) {
+                    reported = true
+                    listener.onStarted()
+                }
+            }
+        } catch (error: SecurityException) {
+            listener.onStartFailed("Nearby permissions are missing: ${error.message.orEmpty()}")
+        } catch (error: Exception) {
+            listener.onStartFailed("Nearby could not start: ${error.message.orEmpty()}")
         }
     }
 
     override fun requestConnection(endpointId: String) {
-        client.requestConnection("SisterMesh", endpointId, lifecycleCallback)
-            .addOnFailureListener { listener?.onConnectionFailed(endpointId, "Connection request failed: ${it.message.orEmpty()}") }
+        try {
+            client.requestConnection("SisterMesh", endpointId, lifecycleCallback)
+                .addOnFailureListener { listener?.onConnectionFailed(endpointId, "Connection request failed: ${it.message.orEmpty()}") }
+        } catch (error: Exception) {
+            listener?.onConnectionFailed(endpointId, "Connection request failed: ${error.message.orEmpty()}")
+        }
     }
 
     override fun acceptConnection(endpointId: String) {
-        client.acceptConnection(endpointId, payloadCallback)
-            .addOnFailureListener { listener?.onConnectionFailed(endpointId, "Could not accept connection: ${it.message.orEmpty()}") }
+        try {
+            client.acceptConnection(endpointId, payloadCallback)
+                .addOnFailureListener { listener?.onConnectionFailed(endpointId, "Could not accept connection: ${it.message.orEmpty()}") }
+        } catch (error: Exception) {
+            listener?.onConnectionFailed(endpointId, "Could not accept connection: ${error.message.orEmpty()}")
+        }
     }
 
     override fun rejectConnection(endpointId: String) {
@@ -137,13 +165,15 @@ class GoogleNearbyTransport(context: Context) : NearbyTransport {
     }
 
     override fun disconnect(endpointId: String) {
-        client.disconnectFromEndpoint(endpointId)
+        runCatching { client.disconnectFromEndpoint(endpointId) }
     }
 
     override fun stop() {
-        client.stopAdvertising()
-        client.stopDiscovery()
-        client.stopAllEndpoints()
+        runCatching {
+            client.stopAdvertising()
+            client.stopDiscovery()
+            client.stopAllEndpoints()
+        }
         listener = null
     }
 }
