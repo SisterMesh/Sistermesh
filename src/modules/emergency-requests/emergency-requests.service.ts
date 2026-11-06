@@ -3,7 +3,10 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   BloodGroup,
@@ -16,16 +19,30 @@ import { AuthenticatedUser } from '../../common/authenticated-user';
 import { DONOR_GROUPS_FOR_RECIPIENT } from '../donors/blood-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmergencyRequestDto } from './dto/create-emergency-request.dto';
-
-const ALLOWED_TRANSITIONS: Partial<Record<EmergencyRequestStatus, EmergencyRequestStatus[]>> = {
-  [EmergencyRequestStatus.SEARCHING]: [EmergencyRequestStatus.WAITING, EmergencyRequestStatus.ACCEPTED, EmergencyRequestStatus.EXPIRED],
-  [EmergencyRequestStatus.WAITING]: [EmergencyRequestStatus.SEARCHING, EmergencyRequestStatus.ACCEPTED, EmergencyRequestStatus.EXPIRED],
-  [EmergencyRequestStatus.ACCEPTED]: [EmergencyRequestStatus.COMPLETED],
-};
+import { UpdateEmergencyRequestDto } from './dto/update-emergency-request.dto';
 
 @Injectable()
-export class EmergencyRequestsService {
+export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(EmergencyRequestsService.name);
+  private expiryTimer?: NodeJS.Timeout;
+
   constructor(private readonly prisma: PrismaService) {}
+
+  onModuleInit() {
+    this.expiryTimer = setInterval(() => {
+      void this.expireDueRequests().catch((error: unknown) => {
+        this.logger.error('Failed to expire due emergency requests.', error);
+      });
+    }, 60_000);
+    this.expiryTimer.unref();
+    void this.expireDueRequests().catch((error: unknown) => {
+      this.logger.error('Failed to expire due emergency requests at startup.', error);
+    });
+  }
+
+  onModuleDestroy() {
+    if (this.expiryTimer) clearInterval(this.expiryTimer);
+  }
 
   async create(user: AuthenticatedUser, dto: CreateEmergencyRequestDto) {
     const worker = await this.prisma.user.findUnique({
@@ -98,6 +115,7 @@ export class EmergencyRequestsService {
   }
 
   async listEligible(user: AuthenticatedUser) {
+    await this.expireDueRequests();
     const donor = await this.prisma.user.findUnique({
       where: { id: user.id },
       include: { donorProfile: true },
@@ -116,7 +134,7 @@ export class EmergencyRequestsService {
             .filter(([, donors]) => donors.includes(donorBloodGroup))
             .map(([recipient]) => recipient as BloodGroup),
         },
-        status: { in: [EmergencyRequestStatus.SEARCHING, EmergencyRequestStatus.WAITING] },
+        status: { in: [EmergencyRequestStatus.OPEN, EmergencyRequestStatus.PARTIALLY_FILLED] },
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
       select: {
@@ -134,6 +152,7 @@ export class EmergencyRequestsService {
   }
 
   async listForFacility(user: AuthenticatedUser) {
+    await this.expireDueRequests();
     const facilityId = await this.getWorkerFacility(user);
     return this.prisma.emergencyRequest.findMany({
       where: { facilityId },
@@ -142,59 +161,85 @@ export class EmergencyRequestsService {
     });
   }
 
-  async updateStatus(user: AuthenticatedUser, requestId: string, status: EmergencyRequestStatus) {
+  async update(user: AuthenticatedUser, requestId: string, dto: UpdateEmergencyRequestDto) {
     const facilityId = await this.getWorkerFacility(user);
-    const request = await this.prisma.emergencyRequest.findUnique({ where: { id: requestId } });
-    if (!request || request.facilityId !== facilityId) {
-      throw new NotFoundException('Emergency request not found.');
+    const expiresAt = dto.expiresAt === undefined
+      ? undefined
+      : dto.expiresAt === null
+        ? null
+        : new Date(dto.expiresAt);
+    if (expiresAt && expiresAt <= new Date()) {
+      throw new BadRequestException('Request expiry must be in the future.');
     }
-    if (!ALLOWED_TRANSITIONS[request.status]?.includes(status)) {
-      throw new ConflictException(`Cannot change request from ${request.status} to ${status}.`);
-    }
-    return this.prisma.$transaction(async (tx) => {
-      const changed = await tx.emergencyRequest.updateMany({
-        where: { id: request.id, status: request.status },
-        data: { status },
-      });
-      if (!changed.count) {
-        throw new ConflictException('The request status changed before this update.');
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const request = await this.lockRequest(tx, requestId);
+      if (!request || request.facilityId !== facilityId) {
+        throw new NotFoundException('Emergency request not found.');
       }
-      const updated = await tx.emergencyRequest.findUnique({
-        where: { id: request.id },
+      const now = new Date();
+      if (await this.expireLockedRequest(tx, request, now)) return { expired: true as const };
+      if (!this.isOpen(request.status)) {
+        throw new ConflictException(`Cannot update a request in ${request.status} status.`);
+      }
+      const confirmedCount = await tx.donationConfirmation.count({ where: { requestId } });
+      const units = dto.units ?? request.units;
+      if (units < confirmedCount) {
+        throw new ConflictException('The required donation count cannot be lower than donations already confirmed.');
+      }
+      const data: Prisma.EmergencyRequestUpdateInput = {};
+      if (dto.requestedBloodGroup !== undefined) data.requestedBloodGroup = dto.requestedBloodGroup;
+      if (dto.urgency !== undefined) data.urgency = dto.urgency;
+      if (dto.units !== undefined) data.units = dto.units;
+      if (expiresAt !== undefined) data.expiresAt = expiresAt;
+      const updated = await tx.emergencyRequest.update({
+        where: { id: requestId },
+        data,
         include: { facility: true },
       });
       await tx.requestActivity.create({
         data: {
           requestId,
           actorUserId: user.id,
-          eventType: status === EmergencyRequestStatus.EXPIRED ? RequestActivityType.EXPIRED : RequestActivityType.STATUS_CHANGED,
+          eventType: RequestActivityType.UPDATED,
           fromStatus: request.status,
-          toStatus: status,
+          toStatus: request.status,
+          metadata: { fields: Object.keys(data) },
         },
       });
-      return updated;
+      if (confirmedCount > 0 && confirmedCount >= updated.units && request.status !== EmergencyRequestStatus.FULFILLED) {
+        const fulfilled = await tx.emergencyRequest.update({
+          where: { id: requestId },
+          data: { status: EmergencyRequestStatus.FULFILLED },
+          include: { facility: true },
+        });
+        await this.recordStatusTransition(tx, requestId, user.id, request.status, EmergencyRequestStatus.FULFILLED);
+        return { request: fulfilled };
+      }
+      return { request: updated };
     });
+    if ('expired' in result) throw new ConflictException('This emergency request has expired.');
+    return result.request;
   }
 
   async cancel(user: AuthenticatedUser, requestId: string) {
     const facilityId = await this.getWorkerFacility(user);
-    const request = await this.prisma.emergencyRequest.findUnique({ where: { id: requestId } });
-    if (!request || request.facilityId !== facilityId) {
-      throw new NotFoundException('Emergency request not found.');
-    }
-    if (![EmergencyRequestStatus.SEARCHING, EmergencyRequestStatus.WAITING, EmergencyRequestStatus.ACCEPTED].some((status) => status === request.status)) {
-      throw new ConflictException(`Cannot cancel a request in ${request.status} status.`);
-    }
-    return this.prisma.$transaction(async (tx) => {
-      const changed = await tx.emergencyRequest.updateMany({
-        where: { id: request.id, status: request.status },
-        data: { status: EmergencyRequestStatus.CANCELLED },
-      });
-      if (!changed.count) {
-        throw new ConflictException('The request status changed before cancellation.');
+    const result = await this.prisma.$transaction(async (tx) => {
+      const request = await this.lockRequest(tx, requestId);
+      if (!request || request.facilityId !== facilityId) {
+        throw new NotFoundException('Emergency request not found.');
       }
-      const updated = await tx.emergencyRequest.findUnique({
-        where: { id: request.id },
+      if (request.status === EmergencyRequestStatus.CANCELLED) {
+        return { request: await tx.emergencyRequest.findUnique({ where: { id: requestId }, include: { facility: true } }) };
+      }
+      const now = new Date();
+      if (await this.expireLockedRequest(tx, request, now)) return { expired: true as const };
+      if (!this.isOpen(request.status)) {
+        throw new ConflictException(`Cannot cancel a request in ${request.status} status.`);
+      }
+      const updated = await tx.emergencyRequest.update({
+        where: { id: requestId },
+        data: { status: EmergencyRequestStatus.CANCELLED },
         include: { facility: true },
       });
       await tx.requestActivity.create({
@@ -206,8 +251,10 @@ export class EmergencyRequestsService {
           toStatus: EmergencyRequestStatus.CANCELLED,
         },
       });
-      return updated;
+      return { request: updated };
     });
+    if ('expired' in result) throw new ConflictException('This emergency request has expired.');
+    return result.request;
   }
 
   async history(user: AuthenticatedUser, requestId: string) {

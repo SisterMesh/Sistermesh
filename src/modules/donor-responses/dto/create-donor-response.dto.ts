@@ -7,7 +7,11 @@ export class CreateDonorResponseDto {
   @IsUUID()
   idempotencyKey!: string;
 
-  @ApiProperty({ enum: [DonorResponseStatus.ACCEPTED, DonorResponseStatus.DECLINED] })
+  @ApiProperty({
+    enum: [DonorResponseStatus.ACCEPTED, DonorResponseStatus.DECLINED],
+    description: 'This is a preliminary response, not confirmation of a completed donation.',
+    example: DonorResponseStatus.ACCEPTED,
+  })
   @IsIn([DonorResponseStatus.ACCEPTED, DonorResponseStatus.DECLINED])
   status!: DonorResponseStatus;
 }
