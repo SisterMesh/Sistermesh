@@ -1,0 +1,340 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  DONOR
+  HEALTH_WORKER
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum BloodGroup {
+  A_POSITIVE
+  A_NEGATIVE
+  B_POSITIVE
+  B_NEGATIVE
+  AB_POSITIVE
+  AB_NEGATIVE
+  O_POSITIVE
+  O_NEGATIVE
+}
+
+enum RequestUrgency {
+  URGENT
+  CRITICAL
+}
+
+enum EmergencyRequestStatus {
+  SEARCHING
+  WAITING
+  ACCEPTED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum DonorResponseStatus {
+  PENDING
+  DELIVERED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  CONFIRMED
+}
+
+enum RequestActivityType {
+  CREATED
+  DISTRIBUTED
+  DONOR_RESPONDED
+  STATUS_CHANGED
+  CANCELLED
+  EXPIRED
+  DONATION_CONFIRMED
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  READ
+}
+
+enum SyncBatchStatus {
+  RECEIVED
+  PROCESSING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+}
+
+enum MeshMessageType {
+  EMERGENCY_REQUEST
+  DONOR_RESPONSE
+  REQUEST_STATUS
+}
+
+model User {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  role                  UserRole
+  status                AccountStatus          @default(ACTIVE)
+  displayName           String
+  phoneNumber           String                 @unique
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  donorProfile          DonorProfile?
+  healthWorkerProfile   HealthWorkerProfile?
+  registeredDevices     RegisteredDevice[]
+  createdRequests       EmergencyRequest[]     @relation("RequestCreator")
+  donorResponses        DonorResponse[]
+  recordedConfirmations DonationConfirmation[] @relation("ConfirmationRecorder")
+  notifications         Notification[]
+  deviceTokens          DeviceToken[]
+  refreshTokens         RefreshToken[]
+  auditLogs             AuditLog[]             @relation("AuditActor")
+
+  @@index([role, status])
+}
+
+model DonorProfile {
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @unique @db.Uuid
+  bloodGroup     BloodGroup
+  isAvailable    Boolean     @default(true)
+  locality       String?
+  lastActiveAt   DateTime?
+  consentedAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  responses      DonorResponse[]
+  confirmations  DonationConfirmation[]
+
+  @@index([bloodGroup, isAvailable])
+  @@index([locality])
+}
+
+model HealthWorkerProfile {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @unique @db.Uuid
+  facilityId     String?   @db.Uuid
+  designation    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facility       Facility? @relation(fields: [facilityId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId])
+}
+
+model Facility {
+  id               String                 @id @default(uuid()) @db.Uuid
+  name             String
+  locality         String?
+  state            String?
+  contactPhone     String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  healthWorkers    HealthWorkerProfile[]
+  requests         EmergencyRequest[]
+  confirmations    DonationConfirmation[]
+
+  @@index([name])
+  @@index([state, locality])
+}
+
+model RegisteredDevice {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @db.Uuid
+  clientDeviceId    String
+  name              String?
+  publicKey         String?
+  lastSeenAt        DateTime?
+  lastSyncAt        DateTime?
+  revokedAt         DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syncBatches       SyncBatch[]
+  meshMessages      MeshMessage[]
+
+  @@unique([userId, clientDeviceId])
+  @@index([userId, revokedAt])
+}
+
+model EmergencyRequest {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  clientRequestId    String                 @unique @db.Uuid
+  createdByUserId    String                 @db.Uuid
+  facilityId         String                 @db.Uuid
+  requestedBloodGroup BloodGroup
+  urgency            RequestUrgency
+  units               Int
+  status              EmergencyRequestStatus @default(SEARCHING)
+  expiresAt           DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  createdBy           User                   @relation("RequestCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  facility            Facility               @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  donorResponses      DonorResponse[]
+  activityHistory     RequestActivity[]
+  confirmations       DonationConfirmation[]
+  meshMessages        MeshMessage[]
+
+  @@index([status, expiresAt])
+  @@index([requestedBloodGroup, status])
+  @@index([facilityId, createdAt])
+  @@index([createdByUserId, createdAt])
+}
+
+model DonorResponse {
+  id              String              @id @default(uuid()) @db.Uuid
+  idempotencyKey  String              @unique @db.Uuid
+  requestId        String              @db.Uuid
+  donorProfileId   String              @db.Uuid
+  donorUserId      String              @db.Uuid
+  status           DonorResponseStatus @default(PENDING)
+  respondedAt      DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  request          EmergencyRequest    @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  donorProfile     DonorProfile        @relation(fields: [donorProfileId], references: [id], onDelete: Restrict)
+  donorUser        User                @relation(fields: [donorUserId], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, donorProfileId])
+  @@index([requestId, status])
+  @@index([donorUserId, createdAt])
+}
+
+model RequestActivity {
+  id          String             @id @default(uuid()) @db.Uuid
+  requestId   String             @db.Uuid
+  actorUserId String?            @db.Uuid
+  eventType   RequestActivityType
+  fromStatus  EmergencyRequestStatus?
+  toStatus    EmergencyRequestStatus?
+  metadata    Json?
+  occurredAt  DateTime           @default(now())
+  request     EmergencyRequest   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, occurredAt])
+  @@index([actorUserId, occurredAt])
+}
+
+model DonationConfirmation {
+  id                 String          @id @default(uuid()) @db.Uuid
+  idempotencyKey     String          @unique @db.Uuid
+  requestId          String          @db.Uuid
+  donorProfileId     String          @db.Uuid
+  facilityId         String          @db.Uuid
+  confirmedByUserId  String          @db.Uuid
+  consentedAt        DateTime?
+  receiptHash        String
+  confirmedAt        DateTime        @default(now())
+  request            EmergencyRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  donorProfile       DonorProfile    @relation(fields: [donorProfileId], references: [id], onDelete: Restrict)
+  facility           Facility        @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  confirmedBy        User            @relation("ConfirmationRecorder", fields: [confirmedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, donorProfileId])
+  @@index([facilityId, confirmedAt])
+  @@index([confirmedByUserId, confirmedAt])
+}
+
+model Notification {
+  id                String             @id @default(uuid()) @db.Uuid
+  userId            String             @db.Uuid
+  idempotencyKey    String             @unique @db.Uuid
+  notificationType  String
+  status            NotificationStatus @default(QUEUED)
+  sentAt            DateTime?
+  readAt            DateTime?
+  createdAt         DateTime           @default(now())
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+}
+
+model DeviceToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  token       String    @unique
+  platform    String
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt, revokedAt])
+}
+
+model AuditLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  actorUserId String?   @db.Uuid
+  action      String
+  entityType  String
+  entityId    String?   @db.Uuid
+  metadata    Json?
+  occurredAt  DateTime  @default(now())
+  actor       User?     @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+}
+
+model SyncBatch {
+  id                 String          @id @default(uuid()) @db.Uuid
+  registeredDeviceId String          @db.Uuid
+  clientBatchId      String          @db.Uuid
+  status             SyncBatchStatus @default(RECEIVED)
+  receivedCount      Int             @default(0)
+  acceptedCount      Int             @default(0)
+  rejectedCount      Int             @default(0)
+  receivedAt         DateTime        @default(now())
+  completedAt        DateTime?
+  registeredDevice   RegisteredDevice @relation(fields: [registeredDeviceId], references: [id], onDelete: Cascade)
+
+  @@unique([registeredDeviceId, clientBatchId])
+  @@index([status, receivedAt])
+  @@index([registeredDeviceId, receivedAt])
+}
+
+model MeshMessage {
+  id                 String          @id @default(uuid()) @db.Uuid
+  messageId          String          @unique @db.Uuid
+  registeredDeviceId String?         @db.Uuid
+  requestId          String?         @db.Uuid
+  messageType        MeshMessageType
+  contentHash        String
+  hopCount           Int             @default(0)
+  receivedAt         DateTime        @default(now())
+  registeredDevice   RegisteredDevice? @relation(fields: [registeredDeviceId], references: [id], onDelete: SetNull)
+  request            EmergencyRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+
+  @@index([requestId, receivedAt])
+  @@index([registeredDeviceId, receivedAt])
+  @@index([messageType, receivedAt])
+}
