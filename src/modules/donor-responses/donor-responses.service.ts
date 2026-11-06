@@ -17,6 +17,7 @@ import { canDonateTo } from '../donors/blood-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDonorResponseDto } from './dto/create-donor-response.dto';
 import { WithdrawDonorResponseDto } from './dto/withdraw-donor-response.dto';
+import { createSyncActivity } from '../offline-sync/sync-cursor';
 
 @Injectable()
 export class DonorResponsesService {
@@ -100,13 +101,11 @@ export class DonorResponsesService {
             respondedAt: new Date(),
           },
         });
-        await tx.requestActivity.create({
-          data: {
+        await createSyncActivity(tx, {
             requestId,
             actorUserId: user.id,
             eventType,
             metadata: { responseId: response.id },
-          },
         });
         return response;
       });
@@ -170,13 +169,11 @@ export class DonorResponsesService {
             withdrawnAt: new Date(),
           },
         });
-        await tx.requestActivity.create({
-          data: {
+        await createSyncActivity(tx, {
             requestId,
             actorUserId: user.id,
             eventType: RequestActivityType.DONOR_WITHDRAWN,
             metadata: { responseId: response.id },
-          },
         });
         return updated;
       });

@@ -64,6 +64,7 @@ describe('EmergencyRequestsService', () => {
     const tx = {
       emergencyRequest: { create: jest.fn().mockResolvedValue(record) },
       requestActivity: { create: jest.fn().mockResolvedValue({}) },
+      syncCursorState: { update: jest.fn().mockResolvedValue({ value: 1n }) },
     };
     const prisma = {
       user: {

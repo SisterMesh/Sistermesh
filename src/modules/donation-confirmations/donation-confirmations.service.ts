@@ -14,6 +14,7 @@ import {
 import { AuthenticatedUser } from '../../common/authenticated-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDonationConfirmationDto } from './dto/create-donation-confirmation.dto';
+import { createSyncActivity } from '../offline-sync/sync-cursor';
 
 @Injectable()
 export class DonationConfirmationsService {
@@ -87,13 +88,11 @@ export class DonationConfirmationsService {
             where: { id: requestId },
             data: { status: EmergencyRequestStatus.EXPIRED },
           });
-          await tx.requestActivity.create({
-            data: {
+          await createSyncActivity(tx, {
               requestId,
               eventType: RequestActivityType.EXPIRED,
               fromStatus: lockedRequest.status,
               toStatus: EmergencyRequestStatus.EXPIRED,
-            },
           });
           return { expired: true as const };
         }
@@ -149,8 +148,7 @@ export class DonationConfirmationsService {
         if (!changed.count) {
           throw new ConflictException('The request status changed before this donation was confirmed.');
         }
-        await tx.requestActivity.create({
-          data: {
+        await createSyncActivity(tx, {
             requestId,
             actorUserId: user.id,
             eventType: RequestActivityType.DONATION_CONFIRMED,
@@ -161,11 +159,9 @@ export class DonationConfirmationsService {
               donationNumber: nextCount,
               requiredDonations: lockedRequest.units,
             },
-          },
         });
         if (nextStatus !== lockedRequest.status) {
-          await tx.requestActivity.create({
-            data: {
+          await createSyncActivity(tx, {
               requestId,
               actorUserId: user.id,
               eventType:
@@ -174,7 +170,6 @@ export class DonationConfirmationsService {
                   : RequestActivityType.PARTIALLY_FILLED,
               fromStatus: lockedRequest.status,
               toStatus: nextStatus,
-            },
           });
         }
         return { confirmation };

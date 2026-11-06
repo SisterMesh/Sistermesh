@@ -102,6 +102,13 @@ enum SyncBatchStatus {
   FAILED
 }
 
+enum SyncEventStatus {
+  RECEIVED
+  PROCESSED
+  REJECTED
+  CONFLICT
+}
+
 enum MeshMessageType {
   EMERGENCY_REQUEST
   DONOR_RESPONSE
@@ -127,6 +134,8 @@ model User {
   deviceTokens          DeviceToken[]
   refreshTokens         RefreshToken[]
   auditLogs             AuditLog[]             @relation("AuditActor")
+  syncEvents            SyncEvent[]            @relation("SyncEventActor")
+  syncConflicts         SyncConflict[]         @relation("SyncConflictActor")
 
   @@index([role, status])
 }
@@ -203,6 +212,9 @@ model RegisteredDevice {
   user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   syncBatches       SyncBatch[]
   meshMessages      MeshMessage[]
+  syncEvents        SyncEvent[]
+  syncConflicts     SyncConflict[]
+  syncCheckpoint    SyncCheckpoint?
 
   @@unique([userId, clientDeviceId])
   @@index([userId, revokedAt])
@@ -257,6 +269,8 @@ model DonorResponse {
 
 model RequestActivity {
   id          String             @id @default(uuid()) @db.Uuid
+  syncCursor  BigInt             @unique
+  syncEventId String?            @unique @db.Uuid
   requestId   String             @db.Uuid
   actorUserId String?            @db.Uuid
   eventType   RequestActivityType
@@ -348,6 +362,7 @@ model SyncBatch {
   id                 String          @id @default(uuid()) @db.Uuid
   registeredDeviceId String          @db.Uuid
   clientBatchId      String          @db.Uuid
+  requestHash        String?
   status             SyncBatchStatus @default(RECEIVED)
   receivedCount      Int             @default(0)
   acceptedCount      Int             @default(0)
@@ -355,10 +370,78 @@ model SyncBatch {
   receivedAt         DateTime        @default(now())
   completedAt        DateTime?
   registeredDevice   RegisteredDevice @relation(fields: [registeredDeviceId], references: [id], onDelete: Cascade)
+  syncEvents         SyncEvent[]
 
   @@unique([registeredDeviceId, clientBatchId])
   @@index([status, receivedAt])
   @@index([registeredDeviceId, receivedAt])
+}
+
+model SyncEvent {
+  id                 String          @id @default(uuid()) @db.Uuid
+  eventId            String?         @unique @db.Uuid
+  registeredDeviceId String          @db.Uuid
+  userId             String          @db.Uuid
+  batchId            String          @db.Uuid
+  eventType          String?
+  entityId           String?
+  originDeviceId     String?
+  localCreatedAt     DateTime?
+  payloadSchemaVersion Int?
+  correlationId      String?
+  payload            Json
+  payloadHash        String
+  status             SyncEventStatus @default(RECEIVED)
+  errorCode          String?
+  explanation        String?
+  resultEntityId     String?         @db.Uuid
+  attemptCount       Int             @default(1)
+  leaseUntil         DateTime?
+  receivedAt         DateTime        @default(now())
+  processedAt        DateTime?
+  registeredDevice   RegisteredDevice @relation(fields: [registeredDeviceId], references: [id], onDelete: Restrict)
+  user               User            @relation("SyncEventActor", fields: [userId], references: [id], onDelete: Restrict)
+  batch              SyncBatch       @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  conflicts          SyncConflict[]
+
+  @@index([userId, receivedAt])
+  @@index([registeredDeviceId, receivedAt])
+  @@index([batchId, receivedAt])
+  @@index([status, leaseUntil])
+}
+
+model SyncConflict {
+  id                 String          @id @default(uuid()) @db.Uuid
+  syncEventId        String?         @db.Uuid
+  eventId            String          @db.Uuid
+  registeredDeviceId String          @db.Uuid
+  userId             String          @db.Uuid
+  payloadHash        String
+  conflictCode       String
+  explanation        String
+  incomingPayload    Json
+  createdAt          DateTime        @default(now())
+  syncEvent          SyncEvent?      @relation(fields: [syncEventId], references: [id], onDelete: Restrict)
+  registeredDevice   RegisteredDevice @relation(fields: [registeredDeviceId], references: [id], onDelete: Restrict)
+  user               User            @relation("SyncConflictActor", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([eventId, payloadHash, registeredDeviceId])
+  @@index([userId, createdAt])
+  @@index([registeredDeviceId, createdAt])
+}
+
+model SyncCheckpoint {
+  id                 String          @id @default(uuid()) @db.Uuid
+  registeredDeviceId String          @unique @db.Uuid
+  lastCursor         BigInt          @default(0)
+  pendingCursor      BigInt?
+  updatedAt          DateTime        @updatedAt
+  registeredDevice   RegisteredDevice @relation(fields: [registeredDeviceId], references: [id], onDelete: Cascade)
+}
+
+model SyncCursorState {
+  id    Int    @id @default(1)
+  value BigInt @default(0)
 }
 
 model MeshMessage {

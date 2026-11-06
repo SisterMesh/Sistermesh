@@ -12,6 +12,8 @@ import { DonorResponsesController } from '../src/modules/donor-responses/donor-r
 import { DonorResponsesService } from '../src/modules/donor-responses/donor-responses.service';
 import { EmergencyRequestsController } from '../src/modules/emergency-requests/emergency-requests.controller';
 import { EmergencyRequestsService } from '../src/modules/emergency-requests/emergency-requests.service';
+import { OfflineSyncController } from '../src/modules/offline-sync/offline-sync.controller';
+import { OfflineSyncService } from '../src/modules/offline-sync/offline-sync.service';
 import { PrismaModule } from '../src/modules/prisma/prisma.module';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 
@@ -38,6 +40,15 @@ describe('coordination API with verified JWT authentication', () => {
   };
   const donorResponses = { respond: jest.fn(), listMine: jest.fn(), withdraw: jest.fn(), listForRequest: jest.fn() };
   const donationConfirmations = { confirm: jest.fn() };
+  const offlineSync = {
+    registerDevice: jest.fn(),
+    listDevices: jest.fn(),
+    revokeDevice: jest.fn(),
+    uploadBatch: jest.fn(),
+    getChanges: jest.fn(),
+    acknowledgeCheckpoint: jest.fn(),
+    listConflicts: jest.fn(),
+  };
 
   beforeAll(async () => {
     process.env.SESSION_SECRET = 'test-only-session-secret-with-more-than-32-bytes';
@@ -50,12 +61,14 @@ describe('coordination API with verified JWT authentication', () => {
         EmergencyRequestsController,
         DonorResponsesController,
         DonationConfirmationsController,
+        OfflineSyncController,
       ],
       providers: [
         RolesGuard,
         { provide: EmergencyRequestsService, useValue: emergencyRequests },
         { provide: DonorResponsesService, useValue: donorResponses },
         { provide: DonationConfirmationsService, useValue: donationConfirmations },
+        { provide: OfflineSyncService, useValue: offlineSync },
       ],
     })
       .overrideProvider(PrismaService)
@@ -222,5 +235,44 @@ describe('coordination API with verified JWT authentication', () => {
       requestId,
       { idempotencyKey: '00000000-0000-4000-8000-000000000021' },
     );
+  });
+
+  it('protects sync routes with JWT roles and never accepts a client-supplied identity', async () => {
+    const device = { deviceId: '00000000-0000-4000-8000-000000000031' };
+    offlineSync.registerDevice.mockResolvedValue(device);
+    offlineSync.uploadBatch.mockResolvedValue({ status: 'COMPLETED', events: [] });
+    const token = await bearer(UserRole.HEALTH_WORKER);
+
+    await request(app.getHttpServer())
+      .post('/api/sync/devices')
+      .set('Authorization', token)
+      .send({ clientDeviceId: '00000000-0000-4000-8000-000000000032', userId: 'forged' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/api/sync/devices')
+      .set('Authorization', token)
+      .send({ clientDeviceId: '00000000-0000-4000-8000-000000000032' })
+      .expect(201, device);
+
+    const batch = {
+      clientBatchId: '00000000-0000-4000-8000-000000000033',
+      events: [],
+    };
+    await request(app.getHttpServer())
+      .post(`/api/sync/devices/${device.deviceId}/batches`)
+      .set('Authorization', await bearer(UserRole.ADMIN))
+      .send(batch)
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/sync/devices/${device.deviceId}/batches`)
+      .set('Authorization', token)
+      .send(batch)
+      .expect(400);
+    expect(offlineSync.registerDevice).toHaveBeenCalledTimes(1);
+    expect(offlineSync.registerDevice).toHaveBeenCalledWith(
+      expect.objectContaining({ role: UserRole.HEALTH_WORKER }),
+      { clientDeviceId: '00000000-0000-4000-8000-000000000032' },
+    );
+    expect(offlineSync.uploadBatch).not.toHaveBeenCalled();
   });
 });

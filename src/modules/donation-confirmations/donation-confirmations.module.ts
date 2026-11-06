@@ -6,5 +6,6 @@ import { DonationConfirmationsService } from './donation-confirmations.service';
 @Module({
   controllers: [DonationConfirmationsController],
   providers: [DonationConfirmationsService, RolesGuard],
+  exports: [DonationConfirmationsService],
 })
 export class DonationConfirmationsModule {}

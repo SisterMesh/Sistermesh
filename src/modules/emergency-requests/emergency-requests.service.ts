@@ -20,6 +20,7 @@ import { DONOR_GROUPS_FOR_RECIPIENT } from '../donors/blood-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmergencyRequestDto } from './dto/create-emergency-request.dto';
 import { UpdateEmergencyRequestDto } from './dto/update-emergency-request.dto';
+import { createSyncActivity } from '../offline-sync/sync-cursor';
 
 @Injectable()
 export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
@@ -88,14 +89,12 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
           },
           include: { facility: true },
         });
-        await tx.requestActivity.create({
-          data: {
+        await createSyncActivity(tx, {
             requestId: request.id,
             actorUserId: user.id,
             eventType: RequestActivityType.CREATED,
             toStatus: request.status,
             metadata: { facilityId, units: dto.units },
-          },
         });
         return request;
       });
@@ -158,7 +157,13 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async update(user: AuthenticatedUser, requestId: string, dto: UpdateEmergencyRequestDto) {
+  async update(
+    user: AuthenticatedUser,
+    requestId: string,
+    dto: UpdateEmergencyRequestDto,
+    expectedUpdatedAt?: Date,
+    syncEventId?: string,
+  ) {
     const facilityId = await this.getWorkerFacility(user);
     const expiresAt = dto.expiresAt === undefined
       ? undefined
@@ -173,6 +178,26 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       const request = await this.lockRequest(tx, requestId);
       if (!request || request.facilityId !== facilityId) {
         throw new NotFoundException('Emergency request not found.');
+      }
+      if (syncEventId) {
+        const priorSyncActivity = await tx.requestActivity.findUnique({
+          where: { syncEventId },
+          select: { requestId: true },
+        });
+        if (priorSyncActivity) {
+          if (priorSyncActivity.requestId !== requestId) {
+            throw new ConflictException('This event ID was already used to update a different request.');
+          }
+          return {
+            request: await tx.emergencyRequest.findUniqueOrThrow({
+              where: { id: requestId },
+              include: { facility: true },
+            }),
+          };
+        }
+      }
+      if (expectedUpdatedAt && request.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+        throw new ConflictException('The request changed after the device last synchronized.');
       }
       const now = new Date();
       if (await this.expireLockedRequest(tx, request, now)) return { expired: true as const };
@@ -197,15 +222,14 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
         data,
         include: { facility: true },
       });
-      await tx.requestActivity.create({
-        data: {
+      await createSyncActivity(tx, {
           requestId,
           actorUserId: user.id,
           eventType: RequestActivityType.UPDATED,
+          syncEventId: syncEventId ?? null,
           fromStatus: request.status,
           toStatus: request.status,
           metadata: { fields: Object.keys(data) },
-        },
       });
       if (confirmedCount > 0 && confirmedCount >= updated.units) {
         const fulfilled = await tx.emergencyRequest.update({
@@ -242,14 +266,12 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
         data: { status: EmergencyRequestStatus.CANCELLED },
         include: { facility: true },
       });
-      await tx.requestActivity.create({
-        data: {
+      await createSyncActivity(tx, {
           requestId,
           actorUserId: user.id,
           eventType: RequestActivityType.CANCELLED,
           fromStatus: request.status,
           toStatus: EmergencyRequestStatus.CANCELLED,
-        },
       });
       return { request: updated };
     });
@@ -323,13 +345,11 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       data: { status: EmergencyRequestStatus.EXPIRED },
     });
     if (!changed.count) return false;
-    await tx.requestActivity.create({
-      data: {
+    await createSyncActivity(tx, {
         requestId: request.id,
         eventType: RequestActivityType.EXPIRED,
         fromStatus: request.status,
         toStatus: EmergencyRequestStatus.EXPIRED,
-      },
     });
     return true;
   }
@@ -347,9 +367,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
         : toStatus === EmergencyRequestStatus.FULFILLED
           ? RequestActivityType.FULFILLED
           : RequestActivityType.STATUS_CHANGED;
-    await tx.requestActivity.create({
-      data: { requestId, actorUserId, eventType, fromStatus, toStatus },
-    });
+    await createSyncActivity(tx, { requestId, actorUserId, eventType, fromStatus, toStatus });
   }
 
   private async getWorkerFacility(user: AuthenticatedUser): Promise<string> {

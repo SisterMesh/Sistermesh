@@ -41,6 +41,7 @@ describe('DonorResponsesService', () => {
         create: jest.fn().mockResolvedValue(created),
       },
       requestActivity: { create: jest.fn().mockResolvedValue({}) },
+      syncCursorState: { update: jest.fn().mockResolvedValue({ value: 1n }) },
     };
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE', role: UserRole.DONOR, donorProfile }) },
@@ -114,6 +115,7 @@ describe('DonorResponsesService', () => {
         update: jest.fn().mockResolvedValue(withdrawn),
       },
       requestActivity: { create: jest.fn().mockResolvedValue({}) },
+      syncCursorState: { update: jest.fn().mockResolvedValue({ value: 1n }) },
     };
     const prisma = {
       user: {

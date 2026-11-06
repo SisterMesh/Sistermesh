@@ -9,6 +9,7 @@ import { HealthModule } from './modules/health/health.module';
 import { HealthWorkersModule } from './modules/health-workers/health-workers.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { UsersModule } from './modules/users/users.module';
+import { OfflineSyncModule } from './modules/offline-sync/offline-sync.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { UsersModule } from './modules/users/users.module';
     EmergencyRequestsModule,
     DonorResponsesModule,
     DonationConfirmationsModule,
+    OfflineSyncModule,
   ],
 })
 export class AppModule {}

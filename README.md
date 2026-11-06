@@ -4,6 +4,9 @@ NestJS and Prisma backend for the SisterMesh Android application. It provides
 password-based authentication, role-scoped user and facility management,
 emergency coordination APIs, and Swagger documentation.
 
+The Phase 4 offline synchronization contract is documented in
+[docs/offline-sync-contract.md](docs/offline-sync-contract.md).
+
 ## Configuration
 
 Set `DATABASE_URL` in Replit Secrets to the existing Neon PostgreSQL database.
