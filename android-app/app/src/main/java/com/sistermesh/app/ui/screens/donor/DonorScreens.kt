@@ -32,7 +32,7 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
             Column(Modifier.weight(1f)) {
                 Text("Hello, ${p.name.substringBefore(' ')}.", style = MaterialTheme.typography.headlineLarge)
                 Spacer(Modifier.height(8.dp))
-                NetworkPill()
+                NetworkPill(vm.meshState)
             }
             IconBubble(Icons.Rounded.Mic, { voice = true }, "Voice assistant")
         }
@@ -103,8 +103,6 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
             }
         }
 
-        SectionTitle("Demo tools")
-        SmButton("Simulate incoming request", { vm.simulateIncoming() }, style = BtnStyle.Outline, icon = Icons.Rounded.Notifications)
         Spacer(Modifier.height(28.dp))
     }
     if (voice) VoiceSheet(Role.DONOR) { voice = false }

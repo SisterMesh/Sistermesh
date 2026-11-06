@@ -1,5 +1,8 @@
 package com.sistermesh.app.navigation
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
@@ -17,6 +20,7 @@ private fun NavBackStackEntry.arg(key: String) = arguments?.getString(key).orEmp
 @Composable
 fun AppNav(vm: AppViewModel) {
     val nav = rememberNavController()
+    val pendingConnection = vm.meshState.pendingConnections.firstOrNull()
 
     NavHost(navController = nav, startDestination = "splash") {
         composable("splash") {
@@ -57,5 +61,32 @@ fun AppNav(vm: AppViewModel) {
         // Shared
         composable("coordinate/{id}/{ref}") { CoordinationScreen(vm, nav, it.arg("id"), it.arg("ref")) }
         composable("receipt/{id}") { ReceiptScreen(vm, nav, it.arg("id")) }
+    }
+
+    pendingConnection?.let { connection ->
+        AlertDialog(
+            onDismissRequest = { vm.rejectNearbyConnection(connection.endpointId) },
+            title = { Text("Verify nearby device") },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Only accept if both phones show the same security numbers.")
+                    Text(
+                        connection.authenticationDigits,
+                        style = androidx.compose.material3.MaterialTheme.typography.headlineMedium
+                    )
+                    Text("Device: ${connection.endpointName}")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.approveNearbyConnection(connection.endpointId) }) {
+                    Text("Numbers match")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.rejectNearbyConnection(connection.endpointId) }) {
+                    Text("Reject")
+                }
+            }
+        )
     }
 }

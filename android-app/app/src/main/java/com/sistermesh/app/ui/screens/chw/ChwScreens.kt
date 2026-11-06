@@ -34,7 +34,7 @@ fun ChwHomeScreen(vm: AppViewModel, nav: NavController) {
                 Text("Hello, ${p.name.substringBefore(' ')}.", style = MaterialTheme.typography.headlineLarge)
                 Text(p.facility, style = MaterialTheme.typography.bodyLarge, color = Muted)
                 Spacer(Modifier.height(8.dp))
-                NetworkPill()
+                NetworkPill(vm.meshState)
             }
             IconBubble(Icons.Rounded.Mic, { voice = true }, "Voice assistant")
         }
@@ -151,12 +151,23 @@ fun BroadcastScreen(vm: AppViewModel, nav: NavController, id: String) {
     LaunchedEffect(id) { vm.startDiscovery(id) }
     if (r == null) { Page { Spacer(Modifier.height(24.dp)); Text("This request is no longer available.") }; return }
 
+    val deliveryState = vm.meshState.requestDeliveryStates[id]
+    val deliveryText = when (deliveryState) {
+        "TRANSMITTED" -> "Nearby transport accepted the send. A peer receipt has not been confirmed yet."
+        "STORED_BY_PEER" -> "A nearby peer confirmed it stored this message. That does not confirm delivery to the intended recipient."
+        "RELAYED" -> "A nearby peer relayed this message. Destination delivery is not confirmed."
+        "DELIVERED" -> "The intended device confirmed receipt."
+        "EXPIRED" -> "This nearby message expired before delivery was confirmed."
+        "FAILED", "REJECTED" -> "This nearby message could not be sent."
+        else -> "The request is saved on this phone and will send when a trusted nearby connection is available."
+    }
     val (title, sub) = when {
         r.status == RequestStatus.CANCELLED -> "Request cancelled" to "No further devices will receive it."
         r.accepted > 0 -> "A sister said yes." to "Open the responses to coordinate."
-        r.delivered > 0 -> "Waiting for a response." to "The request reached ${r.delivered} nearby devices."
-        r.devicesFound > 0 -> "Devices found." to "Delivering your request now."
-        else -> "Looking for sisters nearby." to "Searching for SisterMesh devices."
+        r.responses.isNotEmpty() -> "Waiting for a response." to "A nearby donor has responded."
+        vm.meshState.connectedDeviceIds.isNotEmpty() -> "Connected to nearby phones." to "Waiting for a donor response."
+        vm.meshState.scanning -> "Looking for sisters nearby." to "Searching for SisterMesh devices."
+        else -> "Nearby connection paused." to vm.meshState.statusText
     }
     val live = r.status == RequestStatus.SEARCHING || r.status == RequestStatus.WAITING
 
@@ -171,7 +182,7 @@ fun BroadcastScreen(vm: AppViewModel, nav: NavController, id: String) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Tag("Request ${r.id}", Tone.Neutral)
             Spacer(Modifier.weight(1f))
-            NetworkPill()
+            NetworkPill(vm.meshState)
         }
         Spacer(Modifier.height(24.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -190,10 +201,12 @@ fun BroadcastScreen(vm: AppViewModel, nav: NavController, id: String) {
         Text(r.facility, style = MaterialTheme.typography.labelMedium, color = Muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard(r.devicesFound.toString(), "Devices found", Modifier.weight(1f))
-            StatCard(r.delivered.toString(), "Delivered", Modifier.weight(1f))
+            StatCard(vm.meshState.nearbyDeviceCount.toString(), "Nearby found", Modifier.weight(1f))
+            StatCard(vm.meshState.connectedDeviceIds.size.toString(), "Connected", Modifier.weight(1f))
             StatCard(r.responses.count { it.status == ResponseStatus.ACCEPTED || it.status == ResponseStatus.DECLINED }.toString(), "Responses", Modifier.weight(1f))
         }
+        Spacer(Modifier.height(12.dp))
+        Notice(deliveryText, Icons.Rounded.Info, Tone.Neutral)
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -225,8 +238,8 @@ fun TrackingScreen(vm: AppViewModel, nav: NavController, id: String) {
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard(r.devicesFound.toString(), "Found", Modifier.weight(1f))
-            StatCard(r.delivered.toString(), "Delivered", Modifier.weight(1f))
+            StatCard(vm.meshState.nearbyDeviceCount.toString(), "Nearby", Modifier.weight(1f))
+            StatCard(vm.meshState.connectedDeviceIds.size.toString(), "Connected", Modifier.weight(1f))
             StatCard(r.accepted.toString(), "Accepted", Modifier.weight(1f))
             StatCard(r.declined.toString(), "Declined", Modifier.weight(1f))
         }

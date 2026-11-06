@@ -2,7 +2,11 @@ package com.sistermesh.app.data
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.testing.MigrationTestHelper
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.platform.app.InstrumentationRegistry
+import com.sistermesh.app.data.local.MIGRATION_1_2
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -20,6 +24,13 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 class SisterMeshRepositoryTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
+    private val migrationHelper by lazy {
+        MigrationTestHelper(
+            InstrumentationRegistry.getInstrumentation(),
+            SisterMeshDatabase::class.java.canonicalName!!,
+            FrameworkSQLiteOpenHelperFactory()
+        )
+    }
 
     @Test
     fun offlineRequestAndVersionOneEventAreSavedTogether() = runBlocking {
@@ -180,11 +191,56 @@ class SisterMeshRepositoryTest {
             assertEquals("A+", persistedRequest.bloodGroup)
             assertEquals(eventId, secondRepository.observePendingEvents().first().single().eventId)
             assertEquals(deviceId, reopened!!.deviceInfoDao().get()?.clientDeviceId?.toString())
-            assertEquals(1, reopened!!.openHelper.writableDatabase.version)
+            assertEquals(2, reopened!!.openHelper.writableDatabase.version)
             assertEquals(request.id, persistedRequest.id)
         } finally {
             if (reopened?.isOpen == true) reopened?.close()
             context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun versionOneDataSurvivesMeshMigrationWithoutDestructiveFallback() {
+        val name = "sistermesh-migration-${UUID.randomUUID()}.db"
+        context.deleteDatabase(name)
+        val versionOne = migrationHelper.createDatabase(name, 1)
+        versionOne.execSQL(
+            """
+            INSERT INTO profiles
+            (id, role, name, bloodGroup, area, phone, facility, facilityLocation, designation, isAvailable, language)
+            VALUES (1, 'CHW', 'Legacy Worker', '', '', '', 'Legacy Clinic', 'Riverside', 'Nurse', 1, 'English')
+            """.trimIndent()
+        )
+        versionOne.execSQL(
+            """
+            INSERT INTO emergency_requests
+            (localId, serverId, kind, bloodGroup, urgency, units, note, facility, createdAt, updatedAt,
+             status, devicesFound, delivered, distance, receivedAt, expiresIn, decision, confirmed, isDemo, syncStatus)
+            VALUES ('legacy-request', NULL, 'OUTGOING', 'O-', 'CRITICAL', 2, 'local note', 'Legacy Clinic',
+             '2026-01-01T00:00:00Z', NULL, 'SEARCHING', 0, 0, '', '', '', 'NONE', 0, 0, 'PENDING')
+            """.trimIndent()
+        )
+        versionOne.close()
+
+        val migrated = migrationHelper.runMigrationsAndValidate(name, 2, true, MIGRATION_1_2)
+        try {
+            val profile = migrated.query("SELECT name FROM profiles WHERE id = 1")
+            assertTrue(profile.moveToFirst())
+            assertEquals("Legacy Worker", profile.getString(0))
+            profile.close()
+            val request = migrated.query("SELECT note FROM emergency_requests WHERE localId = 'legacy-request'")
+            assertTrue(request.moveToFirst())
+            assertEquals("local note", request.getString(0))
+            request.close()
+            val meshTables = migrated.query(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('mesh_messages', 'mesh_acknowledgements')"
+            )
+            assertTrue(meshTables.moveToFirst())
+            assertEquals(2, meshTables.getInt(0))
+            meshTables.close()
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
         }
     }
 

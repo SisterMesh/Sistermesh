@@ -1,5 +1,12 @@
 package com.sistermesh.app.ui.screens.onboarding
 
+import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -16,10 +23,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.sistermesh.app.data.*
+import com.sistermesh.app.communication.NearbyPermissions
+import com.sistermesh.app.SisterMeshApplication
 import com.sistermesh.app.ui.components.*
 import com.sistermesh.app.ui.theme.*
 import kotlinx.coroutines.delay
@@ -229,30 +242,85 @@ private data class Perm(val title: String, val why: String, val icon: ImageVecto
 
 @Composable
 fun PermissionsScreen(onDone: () -> Unit) {
-    val perms = listOf(
-        Perm("Bluetooth", "Finds and connects to nearby SisterMesh phones.", Icons.Rounded.Bluetooth),
-        Perm("Nearby devices", "Sends and receives requests without internet.", Icons.Rounded.Wifi),
-        Perm("Location", "Android needs this to scan for nearby devices. Your position is never shared.", Icons.Rounded.LocationOn)
-    )
-    val granted = remember { mutableStateListOf(false, false, false) }
-    val all = granted.all { it }
+    val context = LocalContext.current
+    val app = context.applicationContext as SisterMeshApplication
+    var missing by remember { mutableStateOf(NearbyPermissions.missing(context)) }
+    val bluetoothEnabled = remember {
+        mutableStateOf(runCatching { BluetoothAdapter.getDefaultAdapter()?.isEnabled == true }.getOrDefault(false))
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    fun refresh() {
+        missing = NearbyPermissions.missing(context)
+        bluetoothEnabled.value = runCatching { BluetoothAdapter.getDefaultAdapter()?.isEnabled == true }.getOrDefault(false)
+        app.nearbyManager.refreshEnvironment()
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refresh()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refresh()
+    }
+    val all = missing.isEmpty()
+    val permissionLabels = missing.map { it.substringAfterLast('.') }.joinToString(", ")
 
     Page(footer = {
-        SmButton(if (all) "Continue" else "Enable permissions", {
-            if (all) onDone() else for (i in granted.indices) granted[i] = true
+        SmButton(if (all) "Continue" else "Enable nearby access", {
+            if (all) onDone() else permissionLauncher.launch(missing.toTypedArray())
         })
-        if (!all) Text(
-            "Without these, requests cannot reach nearby phones.",
-            style = MaterialTheme.typography.labelMedium, color = Muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
-        )
+        if (!all) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Continue without nearby access") }
+        }
     }) {
         Spacer(Modifier.height(28.dp))
         Text("Let your phone talk to nearby phones", style = MaterialTheme.typography.headlineLarge)
         Spacer(Modifier.height(8.dp))
-        Text("Tap a permission to allow it, or enable them all.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Text(
+            "SisterMesh uses Nearby Connections to find and connect to phones without internet. Requests contain only the limited details needed to coordinate.",
+            style = MaterialTheme.typography.bodyLarge, color = Muted
+        )
         Spacer(Modifier.height(24.dp))
-        perms.forEachIndexed { i, p ->
-            SmCard(onClick = { granted[i] = !granted[i] }) {
+        val rows = buildList {
+            add(
+                Perm(
+                    "Bluetooth",
+                    "Used as one of the nearby radio options. Bluetooth is ${if (bluetoothEnabled.value) "on" else "off"}.",
+                    Icons.Rounded.Bluetooth
+                ) to if (bluetoothEnabled.value) "On" else "Off"
+            )
+            add(
+                Perm(
+                    "Nearby device access",
+                    "Required to discover and exchange messages with nearby phones.",
+                    Icons.Rounded.Wifi
+                ) to if (all) "Allowed" else "Needed"
+            )
+            if (Build.VERSION.SDK_INT < 33) {
+                add(
+                    Perm(
+                        "Location permission",
+                        "Older Android versions require this for nearby scanning. SisterMesh does not request or send your location.",
+                        Icons.Rounded.LocationOn
+                    ) to if (Manifest.permission.ACCESS_FINE_LOCATION !in missing) "Allowed" else "Needed"
+                )
+            } else {
+                add(
+                    Perm(
+                        "Location",
+                        "Your location is not required or sent.",
+                        Icons.Rounded.LocationOn
+                    ) to "Not needed"
+                )
+            }
+        }
+        rows.forEach { (p, status) ->
+            SmCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Mint), contentAlignment = Alignment.Center) {
                         Icon(p.icon, null, tint = Teal, modifier = Modifier.size(22.dp))
@@ -263,10 +331,23 @@ fun PermissionsScreen(onDone: () -> Unit) {
                         Text(p.why, style = MaterialTheme.typography.bodyMedium, color = Muted)
                     }
                     Spacer(Modifier.width(8.dp))
-                    if (granted[i]) Tag("Allowed", Tone.Good, Icons.Rounded.Check) else Tag("Off", Tone.Neutral, Icons.Rounded.Close)
+                    Tag(
+                        status,
+                        if (status == "Allowed" || status == "On" || status == "Not needed") Tone.Good else Tone.Neutral,
+                        if (status == "Allowed" || status == "On" || status == "Not needed") Icons.Rounded.Check else Icons.Rounded.Close
+                    )
                 }
             }
             Spacer(Modifier.height(12.dp))
+        }
+        if (!all) {
+            Text("Needed permissions: $permissionLabels", style = MaterialTheme.typography.labelMedium, color = Muted)
+        }
+        if (!bluetoothEnabled.value) {
+            TextButton(
+                onClick = { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Open Bluetooth settings") }
         }
     }
 }

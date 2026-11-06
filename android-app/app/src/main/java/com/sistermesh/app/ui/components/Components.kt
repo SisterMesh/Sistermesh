@@ -39,6 +39,7 @@ import androidx.navigation.NavController
 import com.sistermesh.app.data.BloodRequest
 import com.sistermesh.app.data.BloodGroups
 import com.sistermesh.app.data.RequestStatus
+import com.sistermesh.app.communication.MeshNetworkUiState
 import com.sistermesh.app.ui.theme.*
 
 // ───────────────────────── Layout ─────────────────────────
@@ -204,8 +205,22 @@ fun RequestStatus.icon() = when (this) {
 }
 
 @Composable
-fun NetworkPill(modifier: Modifier = Modifier) {
-    Tag("Offline. Nearby active", Tone.Good, Icons.Rounded.WifiOff, modifier)
+fun NetworkPill(state: MeshNetworkUiState? = null, modifier: Modifier = Modifier) {
+    val label = when {
+        state == null -> "Nearby paused"
+        !state.permissionsGranted -> "Nearby permission needed"
+        !state.bluetoothEnabled -> "Bluetooth off"
+        state.connectedDeviceIds.isNotEmpty() -> "${state.connectedDeviceIds.size} connected"
+        state.scanning && state.nearbyDeviceCount > 0 -> "${state.nearbyDeviceCount} nearby found"
+        state.scanning -> "Searching nearby"
+        else -> "Nearby paused"
+    }
+    val tone = when {
+        state?.connectedDeviceIds?.isNotEmpty() == true -> Tone.Good
+        state?.scanning == true -> Tone.Warn
+        else -> Tone.Neutral
+    }
+    Tag(label, tone, if (state?.scanning == true) Icons.Rounded.Wifi else Icons.Rounded.WifiOff, modifier)
 }
 
 @Composable

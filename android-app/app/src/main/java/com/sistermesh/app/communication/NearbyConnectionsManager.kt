@@ -1,0 +1,363 @@
+package com.sistermesh.app.communication
+
+import android.bluetooth.BluetoothAdapter
+import android.content.Context
+import android.os.Build
+import android.provider.Settings
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.Manifest
+import com.sistermesh.app.data.local.TrustedMeshPeerEntity
+import com.sistermesh.app.data.local.SyncEventEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
+
+data class MeshNetworkUiState(
+    val scanning: Boolean = false,
+    val permissionsGranted: Boolean = false,
+    val bluetoothEnabled: Boolean = true,
+    val nearbyDeviceCount: Int = 0,
+    val connectedDeviceIds: Set<String> = emptySet(),
+    val pendingConnections: List<PendingNearbyConnection> = emptyList(),
+    val trustedPeers: List<TrustedMeshPeerEntity> = emptyList(),
+    val pendingMessages: Int = 0,
+    val requestDeliveryStates: Map<String, String> = emptyMap(),
+    val statusText: String = "Nearby connections are paused.",
+    val lastError: String? = null
+)
+
+class NearbyConnectionsManager(
+    context: Context,
+    private val repository: MeshRepository,
+    private val transport: NearbyTransport
+) : NearbyTransportListener {
+    private val appContext = context.applicationContext
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val flushMutex = Mutex()
+    private val mutableState = MutableStateFlow(MeshNetworkUiState())
+    val state: StateFlow<MeshNetworkUiState> = mutableState.asStateFlow()
+
+    private val discovered = ConcurrentHashMap<String, String>()
+    private val requestedEndpoints = ConcurrentHashMap.newKeySet<String>()
+    private val connectedEndpoints = ConcurrentHashMap.newKeySet<String>()
+    private val endpointDeviceIds = ConcurrentHashMap<String, String>()
+    private var foreground = false
+    private var starting = false
+    private var running = false
+
+    init {
+        scope.launch {
+            repository.observeTrustedPeers().collectLatest { peers ->
+                mutableState.value = mutableState.value.copy(trustedPeers = peers)
+            }
+        }
+        scope.launch {
+            repository.observeMessages().collectLatest { rows ->
+                val localId = runCatching { repository.localDeviceId() }.getOrNull()
+                val statuses = rows.asSequence()
+                    .filter { it.originDeviceId == localId && it.eventType == "request.create" }
+                    .mapNotNull { row -> row.localEntityId?.let { it to row.deliveryState } }
+                    .toMap()
+                mutableState.value = mutableState.value.copy(requestDeliveryStates = statuses)
+            }
+        }
+    }
+
+    suspend fun enqueue(event: SyncEventEntity) {
+        runCatching { repository.ensureOutgoing(event) }
+            .onFailure { updateState(lastError = it.message ?: "Could not queue this nearby message.") }
+        refreshPendingCount()
+        flushOutbox()
+    }
+
+    fun flushPending() {
+        scope.launch { flushOutbox() }
+    }
+
+    fun onForeground() {
+        foreground = true
+        refreshEnvironment()
+        scope.launch { repository.cleanupExpired() }
+    }
+
+    fun onBackground() {
+        foreground = false
+        stopTransport()
+        updateState(
+            scanning = false,
+            nearbyDeviceCount = 0,
+            connectedDeviceIds = emptySet(),
+            pendingConnections = emptyList(),
+            statusText = "Nearby connections pause when SisterMesh is not in the foreground."
+        )
+    }
+
+    fun refreshEnvironment() {
+        val permissionGranted = NearbyPermissions.hasAll(appContext)
+        val bluetoothEnabled = isBluetoothEnabled()
+        updateState(permissionsGranted = permissionGranted, bluetoothEnabled = bluetoothEnabled)
+        reconcile()
+    }
+
+    fun approveConnection(endpointId: String) {
+        val pending = mutableState.value.pendingConnections.any { it.endpointId == endpointId }
+        if (!pending) return
+        transport.acceptConnection(endpointId)
+        updateState(pendingConnections = mutableState.value.pendingConnections.filterNot { it.endpointId == endpointId })
+    }
+
+    fun rejectConnection(endpointId: String) {
+        transport.rejectConnection(endpointId)
+        requestedEndpoints.remove(endpointId)
+        updateState(pendingConnections = mutableState.value.pendingConnections.filterNot { it.endpointId == endpointId })
+    }
+
+    override fun onStarted() {
+        starting = false
+        running = true
+        updateState(
+            scanning = true,
+            lastError = null,
+            statusText = if (mutableState.value.bluetoothEnabled) {
+                "Searching for nearby SisterMesh devices."
+            } else {
+                "Bluetooth is off; nearby discovery may be limited."
+            }
+        )
+        scope.launch { flushOutbox() }
+    }
+
+    override fun onStartFailed(message: String) {
+        starting = false
+        running = false
+        updateState(scanning = false, lastError = message, statusText = "Nearby discovery could not start.")
+    }
+
+    override fun onEndpointFound(endpointId: String, endpointName: String) {
+        discovered[endpointId] = endpointName
+        updateState(nearbyDeviceCount = discovered.size)
+        if (requestedEndpoints.add(endpointId) && !connectedEndpoints.contains(endpointId)) {
+            transport.requestConnection(endpointId)
+        }
+    }
+
+    override fun onEndpointLost(endpointId: String) {
+        discovered.remove(endpointId)
+        if (!connectedEndpoints.contains(endpointId)) requestedEndpoints.remove(endpointId)
+        updateState(nearbyDeviceCount = discovered.size)
+    }
+
+    override fun onConnectionInitiated(connection: PendingNearbyConnection) {
+        val pending = mutableState.value.pendingConnections
+            .filterNot { it.endpointId == connection.endpointId } + connection
+        updateState(
+            pendingConnections = pending,
+            statusText = "Compare the security numbers on both phones before connecting."
+        )
+    }
+
+    override fun onConnectionAccepted(endpointId: String) {
+        requestedEndpoints.remove(endpointId)
+        connectedEndpoints.add(endpointId)
+        updateState(statusText = "Verifying the connected device.")
+        scope.launch {
+            runCatching {
+                val identity = repository.identityForLocalDevice()
+                transport.send(endpointId, MeshCodec.encodeHello(identity)) { ok, error ->
+                    if (!ok) updateState(lastError = error, statusText = "Device identity exchange failed.")
+                }
+            }.onFailure {
+                updateState(lastError = it.message, statusText = "Could not verify this device.")
+            }
+        }
+    }
+
+    override fun onConnectionFailed(endpointId: String, message: String) {
+        requestedEndpoints.remove(endpointId)
+        connectedEndpoints.remove(endpointId)
+        endpointDeviceIds.remove(endpointId)
+        updateState(
+            connectedDeviceIds = endpointDeviceIds.values.toSet(),
+            pendingConnections = mutableState.value.pendingConnections.filterNot { it.endpointId == endpointId },
+            lastError = message
+        )
+    }
+
+    override fun onDisconnected(endpointId: String) {
+        connectedEndpoints.remove(endpointId)
+        endpointDeviceIds.remove(endpointId)
+        requestedEndpoints.remove(endpointId)
+        updateState(
+            connectedDeviceIds = endpointDeviceIds.values.toSet(),
+            statusText = if (endpointDeviceIds.isEmpty()) "No trusted devices connected." else "A nearby device disconnected."
+        )
+    }
+
+    override fun onPayload(endpointId: String, bytes: ByteArray) {
+        scope.launch {
+            val senderId = endpointDeviceIds[endpointId]
+            val wirePacket = runCatching { MeshCodec.decode(bytes) }.getOrElse {
+                updateState(lastError = it.message ?: "Invalid nearby packet.")
+                return@launch
+            }
+            when (wirePacket) {
+                is MeshWirePacket.Hello -> {
+                    val trusted = repository.pinDirectPeer(wirePacket.identity)
+                    if (!trusted) {
+                        updateState(lastError = "The device identity does not match its trusted key.")
+                        transport.disconnect(endpointId)
+                        return@launch
+                    }
+                    endpointDeviceIds[endpointId] = wirePacket.identity.deviceId
+                    updateState(
+                        connectedDeviceIds = endpointDeviceIds.values.toSet(),
+                        lastError = null,
+                        statusText = "Connected to a trusted nearby device."
+                    )
+                    flushOutbox()
+                }
+                is MeshWirePacket.Event -> {
+                    if (senderId == null) return@launch
+                    val result = repository.receiveEvent(wirePacket.event, senderId)
+                    result.acknowledgement?.let { sendAcknowledgement(endpointId, it) }
+                    if (result.error != null) updateState(lastError = result.error)
+                    refreshPendingCount()
+                    flushOutbox()
+                }
+                is MeshWirePacket.Acknowledgement -> {
+                    if (senderId == null) return@launch
+                    val forwarded = repository.receiveAcknowledgement(wirePacket.ack, senderId)
+                    forwarded?.let { ack ->
+                        endpointForDevice(ack.nextHopDeviceId)?.let { nextEndpoint ->
+                            sendAcknowledgement(nextEndpoint, ack)
+                        }
+                    }
+                    refreshPendingCount()
+                    flushOutbox()
+                }
+            }
+        }
+    }
+
+    private fun reconcile() {
+        if (!foreground || !mutableState.value.permissionsGranted) {
+            stopTransport()
+            if (!mutableState.value.permissionsGranted) {
+                updateState(
+                    scanning = false,
+                    statusText = "Nearby permissions are needed to connect to phones."
+                )
+            }
+            return
+        }
+        if (running || starting) return
+        starting = true
+        updateState(lastError = null, statusText = "Starting nearby discovery.")
+        transport.start(this)
+    }
+
+    private fun stopTransport() {
+        if (running || starting) transport.stop()
+        starting = false
+        running = false
+        discovered.clear()
+        requestedEndpoints.clear()
+        connectedEndpoints.clear()
+        endpointDeviceIds.clear()
+    }
+
+    private suspend fun flushOutbox() = flushMutex.withLock {
+        refreshPendingCount()
+        if (!running) return
+        val connected = endpointDeviceIds.entries.toList()
+        if (connected.isEmpty()) return
+
+        for (message in repository.pendingMessages()) {
+            for ((endpointId, peerId) in connected) {
+                val bytes = repository.prepareEventForPeer(message.messageId, peerId) ?: continue
+                repository.recordEventAttempt(message.messageId, peerId)
+                transport.send(endpointId, bytes) { ok, error ->
+                    scope.launch {
+                        if (ok) repository.recordEventTransmitted(message.messageId, peerId)
+                        else repository.recordEventSendFailure(message.messageId, peerId, error ?: "Nearby send failed.")
+                        refreshPendingCount()
+                    }
+                }
+            }
+        }
+
+        for ((endpointId, peerId) in connected) {
+            for (ackRow in repository.pendingAcknowledgementsFor(peerId)) {
+                val packet = repository.acknowledgementPacket(ackRow) ?: continue
+                repository.recordAcknowledgementAttempt(packet.acknowledgementId)
+                transport.send(endpointId, MeshCodec.encodeAck(packet)) { ok, _ ->
+                    scope.launch {
+                        if (ok) repository.recordAcknowledgementTransmitted(packet.acknowledgementId)
+                        else repository.recordAcknowledgementFailure(packet.acknowledgementId)
+                    }
+                }
+            }
+        }
+        refreshPendingCount()
+    }
+
+    private fun sendAcknowledgement(endpointId: String, packet: MeshAckPacket) {
+        scope.launch {
+            repository.recordAcknowledgementAttempt(packet.acknowledgementId)
+            transport.send(endpointId, MeshCodec.encodeAck(packet)) { ok, _ ->
+                scope.launch {
+                    if (ok) repository.recordAcknowledgementTransmitted(packet.acknowledgementId)
+                    else repository.recordAcknowledgementFailure(packet.acknowledgementId)
+                }
+            }
+        }
+    }
+
+    private fun endpointForDevice(deviceId: String?): String? =
+        deviceId?.let { id -> endpointDeviceIds.entries.firstOrNull { it.value == id }?.key }
+
+    private suspend fun refreshPendingCount() {
+        updateState(pendingMessages = repository.pendingMessages().size)
+    }
+
+    private fun updateState(
+        scanning: Boolean? = null,
+        permissionsGranted: Boolean? = null,
+        bluetoothEnabled: Boolean? = null,
+        nearbyDeviceCount: Int? = null,
+        connectedDeviceIds: Set<String>? = null,
+        pendingConnections: List<PendingNearbyConnection>? = null,
+        pendingMessages: Int? = null,
+        statusText: String? = null,
+        lastError: String? = mutableState.value.lastError
+    ) {
+        val current = mutableState.value
+        mutableState.value = current.copy(
+            scanning = scanning ?: current.scanning,
+            permissionsGranted = permissionsGranted ?: current.permissionsGranted,
+            bluetoothEnabled = bluetoothEnabled ?: current.bluetoothEnabled,
+            nearbyDeviceCount = nearbyDeviceCount ?: current.nearbyDeviceCount,
+            connectedDeviceIds = connectedDeviceIds ?: current.connectedDeviceIds,
+            pendingConnections = pendingConnections ?: current.pendingConnections,
+            pendingMessages = pendingMessages ?: current.pendingMessages,
+            statusText = statusText ?: current.statusText,
+            lastError = lastError
+        )
+    }
+
+    private fun isBluetoothEnabled(): Boolean {
+        if (Build.VERSION.SDK_INT >= 31 &&
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) return false
+        return runCatching { BluetoothAdapter.getDefaultAdapter()?.isEnabled ?: false }.getOrDefault(false)
+    }
+}

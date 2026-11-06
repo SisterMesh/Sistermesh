@@ -17,9 +17,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             SisterMeshTheme {
                 val app = application as SisterMeshApplication
-                val vm: AppViewModel = viewModel(factory = AppViewModelFactory(app.repository))
+                val vm: AppViewModel = viewModel(factory = AppViewModelFactory(app.repository, app.nearbyManager))
                 AppNav(vm)
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        (application as SisterMeshApplication).nearbyManager.onForeground()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        (application as SisterMeshApplication).nearbyManager.refreshEnvironment()
+    }
+
+    override fun onStop() {
+        (application as SisterMeshApplication).nearbyManager.onBackground()
+        super.onStop()
     }
 }

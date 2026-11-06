@@ -119,6 +119,9 @@ interface SyncEventDao {
     @Query("SELECT * FROM sync_events WHERE status = 'PENDING' ORDER BY localCreatedAt, eventId")
     fun observePending(): Flow<List<SyncEventEntity>>
 
+    @Query("SELECT * FROM sync_events ORDER BY localCreatedAt, eventId")
+    fun observeAll(): Flow<List<SyncEventEntity>>
+
     @Query("SELECT * FROM sync_events WHERE status IN ('REJECTED', 'CONFLICT', 'BLOCKED') ORDER BY localCreatedAt DESC")
     fun observeNeedsReview(): Flow<List<SyncEventEntity>>
 

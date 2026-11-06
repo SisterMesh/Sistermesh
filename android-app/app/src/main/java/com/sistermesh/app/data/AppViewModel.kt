@@ -6,15 +6,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sistermesh.app.communication.MeshNetworkUiState
+import com.sistermesh.app.communication.NearbyConnectionsManager
 import com.sistermesh.app.data.local.SyncEventEntity
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
  * Compose-facing state holder. Room-backed repositories are the source of truth;
  * the discovery and incoming-request simulators remain demo-only.
  */
-class AppViewModel(private val repository: SisterMeshRepository) : ViewModel() {
+class AppViewModel(
+    private val repository: SisterMeshRepository,
+    private val nearbyManager: NearbyConnectionsManager
+) : ViewModel() {
 
     var profile by mutableStateOf<Profile?>(null); private set
     var pendingRole by mutableStateOf<Role?>(null)
@@ -27,6 +31,7 @@ class AppViewModel(private val repository: SisterMeshRepository) : ViewModel() {
             if (isReady) viewModelScope.launch { repository.setLanguage(value) }
         }
     var isReady by mutableStateOf(false); private set
+    var meshState by mutableStateOf(MeshNetworkUiState()); private set
 
     val incoming = mutableStateListOf<IncomingRequest>()
     val requests = mutableStateListOf<BloodRequest>()
@@ -35,10 +40,9 @@ class AppViewModel(private val repository: SisterMeshRepository) : ViewModel() {
     val pendingEvents = mutableStateListOf<SyncEventEntity>()
     val eventsForReview = mutableStateListOf<SyncEventEntity>()
 
-    private val started = mutableSetOf<String>()
-
     init {
         viewModelScope.launch {
+            launch { nearbyManager.state.collect { meshState = it } }
             repository.initialize()
             profile = repository.getProfile()
             val preferences = repository.getPreferences()
@@ -52,6 +56,11 @@ class AppViewModel(private val repository: SisterMeshRepository) : ViewModel() {
             launch { repository.observeReceipts().collect { replace(receipts, it) } }
             launch { repository.observePendingEvents().collect { replace(pendingEvents, it) } }
             launch { repository.observeEventsForReview().collect { replace(eventsForReview, it) } }
+            launch {
+                repository.observeAllEvents().collect { events ->
+                    events.forEach { nearbyManager.enqueue(it) }
+                }
+            }
         }
     }
 
@@ -94,38 +103,10 @@ class AppViewModel(private val repository: SisterMeshRepository) : ViewModel() {
         }
     }
 
-    /** Demo-only discovery simulation. It persists its local state but queues no mesh event. */
-    fun startDiscovery(id: String) {
-        if (!started.add(id)) return
-        viewModelScope.launch {
-            delay(1600)
-            if (request(id)?.status != RequestStatus.SEARCHING) return@launch
-            repository.updateSimulatedRequest(id) { it.copy(devicesFound = 2) }
-            delay(1600)
-            if (request(id)?.status != RequestStatus.SEARCHING) return@launch
-            repository.updateSimulatedRequest(id) {
-                it.copy(
-                    delivered = 2, status = RequestStatus.WAITING,
-                    responses = listOf(
-                        DonorResponse("A3F2", "Rumuola", "About 1.4 km", ResponseStatus.DELIVERED),
-                        DonorResponse("7C1D", "Trans-Amadi", "About 2.1 km", ResponseStatus.DELIVERED)
-                    )
-                )
-            }
-            delay(2600)
-            if (request(id)?.status != RequestStatus.WAITING) return@launch
-            repository.updateSimulatedRequest(id) {
-                it.copy(
-                    status = RequestStatus.ACCEPTED,
-                    responses = it.responses.map { r -> if (r.ref == "A3F2") r.copy(status = ResponseStatus.ACCEPTED) else r }
-                )
-            }
-            delay(2000)
-            repository.updateSimulatedRequest(id) {
-                it.copy(responses = it.responses.map { r -> if (r.ref == "7C1D") r.copy(status = ResponseStatus.DECLINED) else r })
-            }
-        }
-    }
+    fun startDiscovery(@Suppress("UNUSED_PARAMETER") id: String) = nearbyManager.flushPending()
+
+    fun approveNearbyConnection(endpointId: String) = nearbyManager.approveConnection(endpointId)
+    fun rejectNearbyConnection(endpointId: String) = nearbyManager.rejectConnection(endpointId)
 
     fun cancelRequest(id: String) {
         viewModelScope.launch { repository.cancelRequest(id) }
@@ -170,10 +151,6 @@ class AppViewModel(private val repository: SisterMeshRepository) : ViewModel() {
         }
     }
 
-    fun simulateIncoming() {
-        viewModelScope.launch { repository.simulateIncoming(profile) }
-    }
-
     // ---------- Coordination chat ----------
 
     fun send(text: String, mine: Boolean = true) { messages.add(ChatMessage(text, mine)) }
@@ -187,7 +164,6 @@ class AppViewModel(private val repository: SisterMeshRepository) : ViewModel() {
             available = true
             languageState.value = "English"
             messages.clear()
-            started.clear()
             onDone()
         }
     }

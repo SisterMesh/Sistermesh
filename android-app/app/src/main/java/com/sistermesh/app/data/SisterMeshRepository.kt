@@ -59,6 +59,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     fun observeReceipts() = confirmations.observeAll().map { rows -> rows.map { it.toReceipt() } }
     fun observePendingEvents() = events.observePending()
     fun observeEventsForReview() = events.observeNeedsReview()
+    fun observeAllEvents() = events.observeAll()
 
     suspend fun getProfile(): Profile? = profiles.get()?.toDomain()
     suspend fun getPreferences(): Pair<Boolean, String> {
@@ -172,7 +173,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             } else null
         )
         val responseStatus = if (accept) ResponseStatus.ACCEPTED else ResponseStatus.DECLINED
-        val donorRef = profile?.toDomain()?.donorRef ?: "ME"
+        val donorRef = deviceId.takeLast(4).uppercase()
         database.withTransaction {
             requests.upsert(
                 request.copy(
@@ -200,11 +201,11 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     suspend fun withdrawResponse(localId: String) {
         val request = requests.get(localId) ?: return
         val profile = profiles.get()
-        val donorRef = profile?.toDomain()?.donorRef ?: "ME"
+        val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }.clientDeviceId.toString()
+        val donorRef = deviceId.takeLast(4).uppercase()
         val response = responses.find(localId, donorRef) ?: return
         if (response.status == ResponseStatus.WITHDRAWN.name) return
         val now = LocalEventFactory.now()
-        val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }.clientDeviceId.toString()
         database.withTransaction {
             val event = LocalEventFactory.event(
                 eventType = "donor.withdraw",
