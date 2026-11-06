@@ -1,0 +1,172 @@
+package com.sistermesh.app.data.local
+
+import androidx.room.Dao
+import androidx.room.Embedded
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Relation
+import androidx.room.Transaction
+import androidx.room.Upsert
+import kotlinx.coroutines.flow.Flow
+
+data class RequestWithResponses(
+    @Embedded val request: EmergencyRequestEntity,
+    @Relation(parentColumn = "localId", entityColumn = "requestLocalId")
+    val responses: List<DonorResponseEntity>
+)
+
+@Dao
+interface ProfileDao {
+    @Query("SELECT * FROM profiles WHERE id = 1")
+    fun observe(): Flow<ProfileEntity?>
+
+    @Query("SELECT * FROM profiles WHERE id = 1")
+    suspend fun get(): ProfileEntity?
+
+    @Upsert
+    suspend fun upsert(profile: ProfileEntity)
+
+    @Query("DELETE FROM profiles WHERE id = 1")
+    suspend fun clear()
+
+    @Query("UPDATE profiles SET isAvailable = :available WHERE id = 1")
+    suspend fun setAvailability(available: Boolean)
+
+    @Query("UPDATE profiles SET language = :language WHERE id = 1")
+    suspend fun setLanguage(language: String)
+}
+
+@Dao
+interface EmergencyRequestDao {
+    @Transaction
+    @Query("SELECT * FROM emergency_requests WHERE kind = 'OUTGOING' ORDER BY createdAt DESC")
+    fun observeOutgoingWithResponses(): Flow<List<RequestWithResponses>>
+
+    @Query("SELECT * FROM emergency_requests WHERE kind = 'INCOMING' ORDER BY createdAt DESC")
+    fun observeIncoming(): Flow<List<EmergencyRequestEntity>>
+
+    @Transaction
+    @Query("SELECT * FROM emergency_requests WHERE localId = :localId LIMIT 1")
+    suspend fun getWithResponses(localId: String): RequestWithResponses?
+
+    @Query("SELECT * FROM emergency_requests WHERE localId = :localId LIMIT 1")
+    suspend fun get(localId: String): EmergencyRequestEntity?
+
+    @Upsert
+    suspend fun upsert(request: EmergencyRequestEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(request: EmergencyRequestEntity): Long
+
+    @Query("DELETE FROM emergency_requests WHERE isDemo = 1")
+    suspend fun deleteDemoRequests()
+
+    @Query("SELECT COUNT(*) FROM emergency_requests")
+    suspend fun count(): Int
+
+    @Query("UPDATE emergency_requests SET serverId = :serverId, updatedAt = :updatedAt WHERE localId = :localId")
+    suspend fun attachServerId(localId: String, serverId: String, updatedAt: String?)
+}
+
+@Dao
+interface DonorResponseDao {
+    @Query("SELECT * FROM donor_responses WHERE requestLocalId = :requestLocalId ORDER BY createdAt")
+    suspend fun forRequest(requestLocalId: String): List<DonorResponseEntity>
+
+    @Query("SELECT * FROM donor_responses WHERE requestLocalId = :requestLocalId AND ref = :ref LIMIT 1")
+    suspend fun find(requestLocalId: String, ref: String): DonorResponseEntity?
+
+    @Upsert
+    suspend fun upsert(response: DonorResponseEntity)
+
+    @Query("DELETE FROM donor_responses WHERE requestLocalId = :requestLocalId")
+    suspend fun deleteForRequest(requestLocalId: String)
+}
+
+@Dao
+interface DonationConfirmationDao {
+    @Query("SELECT * FROM donation_confirmations ORDER BY confirmedAt DESC")
+    fun observeAll(): Flow<List<DonationConfirmationEntity>>
+
+    @Upsert
+    suspend fun upsert(confirmation: DonationConfirmationEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(confirmation: DonationConfirmationEntity): Long
+}
+
+@Dao
+interface RequestActivityDao {
+    @Query("SELECT * FROM request_activity WHERE requestLocalId = :requestLocalId ORDER BY occurredAt, id")
+    fun observeForRequest(requestLocalId: String): Flow<List<RequestActivityEntity>>
+
+    @Query("SELECT * FROM request_activity WHERE requestLocalId = :requestLocalId ORDER BY occurredAt, id")
+    suspend fun forRequest(requestLocalId: String): List<RequestActivityEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(activity: RequestActivityEntity): Long
+}
+
+@Dao
+interface SyncEventDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(event: SyncEventEntity): Long
+
+    @Query("SELECT * FROM sync_events WHERE eventId = :eventId LIMIT 1")
+    suspend fun get(eventId: String): SyncEventEntity?
+
+    @Query("SELECT * FROM sync_events WHERE status = 'PENDING' ORDER BY localCreatedAt, eventId")
+    fun observePending(): Flow<List<SyncEventEntity>>
+
+    @Query("SELECT * FROM sync_events WHERE status IN ('REJECTED', 'CONFLICT', 'BLOCKED') ORDER BY localCreatedAt DESC")
+    fun observeNeedsReview(): Flow<List<SyncEventEntity>>
+
+    @Query("SELECT * FROM sync_events WHERE localEntityId = :localEntityId ORDER BY localCreatedAt DESC LIMIT 1")
+    suspend fun latestForEntity(localEntityId: String): SyncEventEntity?
+
+    @Query("UPDATE sync_events SET entityId = :entityId WHERE localEntityId = :localEntityId AND eventType != 'request.create' AND entityId IS NULL")
+    suspend fun attachEntityId(localEntityId: String, entityId: String)
+
+    @Query("UPDATE sync_events SET status = 'PENDING', serverErrorCode = NULL, serverExplanation = NULL WHERE localEntityId = :localEntityId AND status = 'BLOCKED' AND serverErrorCode = 'WAITING_FOR_SERVER_ENTITY_ID'")
+    suspend fun unblockForEntity(localEntityId: String)
+
+    @Query("UPDATE sync_events SET status = :status, attemptCount = :attemptCount, lastAttemptedAt = :lastAttemptedAt, serverStatus = :serverStatus, serverEntityId = :serverEntityId, serverErrorCode = :errorCode, serverExplanation = :explanation WHERE eventId = :eventId")
+    suspend fun recordResult(
+        eventId: String,
+        status: String,
+        attemptCount: Int,
+        lastAttemptedAt: String?,
+        serverStatus: String?,
+        serverEntityId: String?,
+        errorCode: String?,
+        explanation: String?
+    )
+}
+
+@Dao
+interface DeviceInfoDao {
+    @Query("SELECT * FROM device_info WHERE id = 1")
+    suspend fun get(): DeviceInfoEntity?
+
+    @Upsert
+    suspend fun upsert(device: DeviceInfoEntity)
+}
+
+@Dao
+interface SyncCheckpointDao {
+    @Query("SELECT * FROM sync_checkpoints WHERE id = 1")
+    suspend fun get(): SyncCheckpointEntity?
+
+    @Upsert
+    suspend fun upsert(checkpoint: SyncCheckpointEntity)
+}
+
+@Dao
+interface AppMetadataDao {
+    @Query("SELECT * FROM app_metadata WHERE id = 1")
+    suspend fun get(): AppMetadataEntity?
+
+    @Upsert
+    suspend fun upsert(metadata: AppMetadataEntity)
+}

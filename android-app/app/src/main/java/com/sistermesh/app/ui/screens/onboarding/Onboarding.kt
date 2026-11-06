@@ -1,0 +1,272 @@
+package com.sistermesh.app.ui.screens.onboarding
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.sistermesh.app.data.*
+import com.sistermesh.app.ui.components.*
+import com.sistermesh.app.ui.theme.*
+import kotlinx.coroutines.delay
+
+// S01
+@Composable
+fun SplashScreen(isReady: Boolean = true, onDone: () -> Unit) {
+    LaunchedEffect(isReady) {
+        if (isReady) {
+            delay(1800)
+            onDone()
+        }
+    }
+    Column(
+        Modifier.fillMaxSize().background(Teal).padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Logo(88.dp, onDark = true)
+        Spacer(Modifier.height(24.dp))
+        Text("SisterMesh", style = MaterialTheme.typography.displayLarge, color = Color.White)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Women helping women. Even without internet.",
+            style = MaterialTheme.typography.bodyLarge, color = Mint, textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(48.dp))
+        LinearProgressIndicator(
+            modifier = Modifier.width(96.dp).clip(RoundedCornerShape(50)),
+            color = Mint, trackColor = Color.White.copy(alpha = 0.15f)
+        )
+    }
+}
+
+// S02
+@Composable
+fun WelcomeScreen(onStart: () -> Unit) {
+    Page(footer = { SmButton("Get started", onStart) }) {
+        Spacer(Modifier.height(28.dp))
+        Logo(52.dp)
+        Spacer(Modifier.height(40.dp))
+        Text("Together, we can save lives.", style = MaterialTheme.typography.displayLarge)
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "When a mother needs blood and the network is down, SisterMesh finds willing donors nearby using device to device signals. No data or internet needed.",
+            style = MaterialTheme.typography.bodyLarge, color = Muted
+        )
+        Spacer(Modifier.height(36.dp))
+        Feature(Icons.Rounded.WifiOff, "Works offline", "Requests travel between nearby phones.")
+        Feature(Icons.Rounded.Favorite, "You decide", "Every request is voluntary. Say yes or no.")
+        Feature(Icons.Rounded.Lock, "Private by design", "No phone numbers or exact locations are shared.")
+    }
+}
+
+@Composable
+private fun Feature(icon: ImageVector, title: String, body: String) {
+    Row(Modifier.padding(vertical = 10.dp), verticalAlignment = Alignment.Top) {
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Mint), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = Teal, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = Muted)
+        }
+    }
+}
+
+// S03
+@Composable
+fun RoleScreen(vm: AppViewModel, onBack: () -> Unit, onContinue: (Role) -> Unit) {
+    val role = vm.pendingRole
+    Page(footer = { SmButton("Continue", { role?.let(onContinue) }, enabled = role != null) }) {
+        BackHeader("", onBack)
+        Spacer(Modifier.height(12.dp))
+        Text("How will you use SisterMesh?", style = MaterialTheme.typography.headlineLarge)
+        Spacer(Modifier.height(8.dp))
+        Text("You can change this later by resetting your profile.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Spacer(Modifier.height(28.dp))
+        RoleCard(Icons.Rounded.Favorite, "I'm a woman donor", "Receive nearby requests and choose when to help.", role == Role.DONOR) { vm.pendingRole = Role.DONOR }
+        Spacer(Modifier.height(14.dp))
+        RoleCard(Icons.Rounded.LocalHospital, "I'm a healthcare worker", "Find willing donors for a patient in an emergency.", role == Role.CHW) { vm.pendingRole = Role.CHW }
+    }
+}
+
+@Composable
+private fun RoleCard(icon: ImageVector, title: String, body: String, selected: Boolean, onClick: () -> Unit) {
+    SmCard(onClick = onClick, tint = if (selected) MintSoft else Paper, border = if (selected) Teal else Line) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(52.dp).clip(CircleShape).background(if (selected) Teal else Fog), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = if (selected) Color.White else Muted)
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(body, style = MaterialTheme.typography.bodyMedium, color = Muted)
+            }
+            RadioButton(selected, onClick, colors = RadioButtonDefaults.colors(selectedColor = Teal, unselectedColor = Line))
+        }
+    }
+}
+
+// S04
+@Composable
+fun DonorRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var age by remember { mutableStateOf("") }
+    var group by remember { mutableStateOf("") }
+    var area by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var consent by remember { mutableStateOf(false) }
+    var tried by remember { mutableStateOf(false) }
+
+    val ageNum = age.toIntOrNull()
+    val ageError = when {
+        age.isBlank() -> "Enter your age"
+        ageNum == null || ageNum < 18 -> "You must be 18 or older to register"
+        else -> null
+    }
+    val valid = name.isNotBlank() && ageError == null && group.isNotBlank() && area.isNotBlank() && consent
+
+    Page(footer = {
+        SmButton("Register", {
+            tried = true
+            if (valid) {
+                vm.register(Profile(Role.DONOR, name.trim(), group, area.trim(), phone.trim())) {
+                    onDone()
+                }
+            }
+        })
+    }) {
+        BackHeader("Donor registration", onBack)
+        Spacer(Modifier.height(8.dp))
+        Text("Tell us a little about you. We only ask what we need.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Spacer(Modifier.height(24.dp))
+        SmField("Name or display name", name, { name = it }, error = if (tried && name.isBlank()) "Enter a name" else null)
+        Spacer(Modifier.height(4.dp))
+        SmField("Age", age, { age = it.filter(Char::isDigit).take(2) }, keyboard = KeyboardType.Number, error = if (tried) ageError else null)
+        Spacer(Modifier.height(4.dp))
+        Text("Blood group", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(10.dp))
+        BloodGroupPicker(group, { group = it }, error = tried && group.isBlank())
+        if (tried && group.isBlank()) Text("Select your blood group", style = MaterialTheme.typography.labelMedium, color = Coral, modifier = Modifier.padding(top = 6.dp))
+        Spacer(Modifier.height(20.dp))
+        SmField("Community or area", area, { area = it }, error = if (tried && area.isBlank()) "Enter your area" else null)
+        Spacer(Modifier.height(4.dp))
+        SmField("Phone number (optional)", phone, { phone = it.filter { c -> c.isDigit() || c == '+' } }, keyboard = KeyboardType.Phone)
+        Spacer(Modifier.height(12.dp))
+        Notice("Registering does not confirm you are medically eligible. A health professional makes that decision.")
+        Spacer(Modifier.height(8.dp))
+        CheckRow(consent, { consent = it }, "I agree to join the voluntary donor network. I can say no to any request.", error = tried && !consent)
+        if (tried && !consent) Text("Consent is required to register", style = MaterialTheme.typography.labelMedium, color = Coral)
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+// S05
+@Composable
+fun ChwRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var facility by remember { mutableStateOf("") }
+    var location by remember { mutableStateOf("") }
+    var designation by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var tried by remember { mutableStateOf(false) }
+    val valid = name.isNotBlank() && facility.isNotBlank() && location.isNotBlank() && designation.isNotBlank()
+    fun err(v: String, m: String) = if (tried && v.isBlank()) m else null
+
+    Page(footer = {
+        SmButton("Register", {
+            tried = true
+            if (valid) {
+                vm.register(
+                    Profile(
+                        Role.CHW,
+                        name.trim(),
+                        phone = phone.trim(),
+                        facility = facility.trim(),
+                        facilityLocation = location.trim(),
+                        designation = designation.trim()
+                    )
+                ) {
+                    onDone()
+                }
+            }
+        })
+    }) {
+        BackHeader("Healthcare worker", onBack)
+        Spacer(Modifier.height(8.dp))
+        Text("Your facility details pre-fill every request you send.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Spacer(Modifier.height(24.dp))
+        SmField("Full name", name, { name = it }, error = err(name, "Enter your name"))
+        Spacer(Modifier.height(4.dp))
+        SmField("Facility name", facility, { facility = it }, error = err(facility, "Enter the facility name"))
+        Spacer(Modifier.height(4.dp))
+        SmField("Facility location", location, { location = it }, error = err(location, "Enter the facility location"))
+        Spacer(Modifier.height(4.dp))
+        SmField("Role or designation", designation, { designation = it }, error = err(designation, "Enter your role"))
+        Spacer(Modifier.height(4.dp))
+        SmField("Contact number (optional)", phone, { phone = it.filter { c -> c.isDigit() || c == '+' } }, keyboard = KeyboardType.Phone)
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+// S06
+private data class Perm(val title: String, val why: String, val icon: ImageVector)
+
+@Composable
+fun PermissionsScreen(onDone: () -> Unit) {
+    val perms = listOf(
+        Perm("Bluetooth", "Finds and connects to nearby SisterMesh phones.", Icons.Rounded.Bluetooth),
+        Perm("Nearby devices", "Sends and receives requests without internet.", Icons.Rounded.Wifi),
+        Perm("Location", "Android needs this to scan for nearby devices. Your position is never shared.", Icons.Rounded.LocationOn)
+    )
+    val granted = remember { mutableStateListOf(false, false, false) }
+    val all = granted.all { it }
+
+    Page(footer = {
+        SmButton(if (all) "Continue" else "Enable permissions", {
+            if (all) onDone() else for (i in granted.indices) granted[i] = true
+        })
+        if (!all) Text(
+            "Without these, requests cannot reach nearby phones.",
+            style = MaterialTheme.typography.labelMedium, color = Muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
+        )
+    }) {
+        Spacer(Modifier.height(28.dp))
+        Text("Let your phone talk to nearby phones", style = MaterialTheme.typography.headlineLarge)
+        Spacer(Modifier.height(8.dp))
+        Text("Tap a permission to allow it, or enable them all.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Spacer(Modifier.height(24.dp))
+        perms.forEachIndexed { i, p ->
+            SmCard(onClick = { granted[i] = !granted[i] }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Mint), contentAlignment = Alignment.Center) {
+                        Icon(p.icon, null, tint = Teal, modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(p.title, style = MaterialTheme.typography.titleMedium)
+                        Text(p.why, style = MaterialTheme.typography.bodyMedium, color = Muted)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    if (granted[i]) Tag("Allowed", Tone.Good, Icons.Rounded.Check) else Tag("Off", Tone.Neutral, Icons.Rounded.Close)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
