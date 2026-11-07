@@ -6,6 +6,7 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.sistermesh.app.data.local.MIGRATION_1_2
+import com.sistermesh.app.data.local.MIGRATION_2_3
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -183,7 +184,7 @@ class SisterMeshRepositoryTest {
             assertEquals("A+", persistedRequest.bloodGroup)
             assertEquals(eventId, secondRepository.observePendingEvents().first().single().eventId)
             assertEquals(deviceId, reopened!!.deviceInfoDao().get()?.clientDeviceId?.toString())
-            assertEquals(2, reopened!!.openHelper.writableDatabase.version)
+            assertEquals(3, reopened!!.openHelper.writableDatabase.version)
             assertEquals(request.id, persistedRequest.id)
         } finally {
             if (reopened?.isOpen == true) reopened?.close()
@@ -192,7 +193,7 @@ class SisterMeshRepositoryTest {
     }
 
     @Test
-    fun versionOneDataSurvivesMeshMigrationWithoutDestructiveFallback() {
+    fun versionOneDataSurvivesMeshAndSyncMigrationsWithoutDestructiveFallback() {
         val name = "sistermesh-migration-${UUID.randomUUID()}.db"
         context.deleteDatabase(name)
         val helper = FrameworkSQLiteOpenHelperFactory().create(
@@ -226,6 +227,25 @@ class SisterMeshRepositoryTest {
                         )
                         db.execSQL(
                             """
+                            CREATE TABLE device_info (
+                                id INTEGER NOT NULL PRIMARY KEY,
+                                clientDeviceId TEXT NOT NULL,
+                                name TEXT NOT NULL
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
+                            CREATE TABLE sync_events (
+                                eventId TEXT NOT NULL PRIMARY KEY,
+                                originDeviceId TEXT NOT NULL,
+                                payloadJson TEXT NOT NULL,
+                                status TEXT NOT NULL
+                            )
+                            """.trimIndent()
+                        )
+                        db.execSQL(
+                            """
                             INSERT INTO profiles
                             (id, role, name, bloodGroup, area, phone, facility, facilityLocation, designation, isAvailable, language)
                             VALUES (1, 'CHW', 'Legacy Worker', '', '', '', 'Legacy Clinic', 'Riverside', 'Nurse', 1, 'English')
@@ -240,6 +260,12 @@ class SisterMeshRepositoryTest {
                              '2026-01-01T00:00:00Z', NULL, 'SEARCHING', 0, 0, '', '', '', 'NONE', 0, 0, 'PENDING')
                             """.trimIndent()
                         )
+                        db.execSQL(
+                            "INSERT INTO device_info (id, clientDeviceId, name) VALUES (1, 'stable-client-id', 'Legacy phone')"
+                        )
+                        db.execSQL(
+                            "INSERT INTO sync_events (eventId, originDeviceId, payloadJson, status) VALUES ('legacy-event', 'stable-client-id', '{}', 'PENDING')"
+                        )
                     }
 
                     override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -251,6 +277,7 @@ class SisterMeshRepositoryTest {
         val migrated = helper.writableDatabase
         try {
             MIGRATION_1_2.migrate(migrated)
+            MIGRATION_2_3.migrate(migrated)
             val profile = migrated.query("SELECT name FROM profiles WHERE id = 1")
             assertTrue(profile.moveToFirst())
             assertEquals("Legacy Worker", profile.getString(0))
@@ -265,6 +292,22 @@ class SisterMeshRepositoryTest {
             assertTrue(meshTables.moveToFirst())
             assertEquals(2, meshTables.getInt(0))
             meshTables.close()
+            val event = migrated.query("SELECT eventId, ownerAccountId FROM sync_events WHERE eventId = 'legacy-event'")
+            assertTrue(event.moveToFirst())
+            assertEquals("legacy-event", event.getString(0))
+            assertTrue(event.isNull(1))
+            event.close()
+            val device = migrated.query("SELECT clientDeviceId, accountUserId FROM device_info WHERE id = 1")
+            assertTrue(device.moveToFirst())
+            assertEquals("stable-client-id", device.getString(0))
+            assertTrue(device.isNull(1))
+            device.close()
+            val syncTables = migrated.query(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('sync_conflicts', 'sync_state')"
+            )
+            assertTrue(syncTables.moveToFirst())
+            assertEquals(2, syncTables.getInt(0))
+            syncTables.close()
         } finally {
             helper.close()
             context.deleteDatabase(name)

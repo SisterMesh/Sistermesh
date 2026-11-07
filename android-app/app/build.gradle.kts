@@ -15,6 +15,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        val configuredApiBase = providers.gradleProperty("sistermeshApiBaseUrl")
+            .orElse(providers.environmentVariable("SISTERMESH_API_BASE_URL"))
+            .orElse(providers.environmentVariable("REPLIT_DEV_DOMAIN").map { "https://$it/api/" })
+            .getOrElse("")
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "SYNC_API_BASE_URL", "\"$configuredApiBase\"")
     }
 
     buildTypes {
@@ -28,7 +35,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
@@ -47,6 +57,8 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     implementation(libs.play.services.nearby)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.okhttp)
     ksp(libs.androidx.room.compiler)
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
@@ -54,6 +66,7 @@ dependencies {
     testImplementation(libs.androidx.test.core.ktx)
     testImplementation(libs.androidx.arch.core.testing)
     testImplementation(libs.robolectric)
+    testImplementation(libs.okhttp.mockwebserver)
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }

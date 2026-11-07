@@ -19,9 +19,11 @@ import androidx.room.TypeConverters
         MeshMessageEntity::class,
         MeshForwardingHistoryEntity::class,
         MeshAcknowledgementEntity::class,
-        MeshRequestRouteEntity::class
+        MeshRequestRouteEntity::class,
+        SyncConflictEntity::class,
+        SyncStateEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 @TypeConverters(RoomTypeConverters::class)
@@ -34,6 +36,8 @@ abstract class SisterMeshDatabase : RoomDatabase() {
     abstract fun syncEventDao(): SyncEventDao
     abstract fun deviceInfoDao(): DeviceInfoDao
     abstract fun syncCheckpointDao(): SyncCheckpointDao
+    abstract fun syncConflictDao(): SyncConflictDao
+    abstract fun syncStateDao(): SyncStateDao
     abstract fun appMetadataDao(): AppMetadataDao
     abstract fun trustedMeshPeerDao(): TrustedMeshPeerDao
     abstract fun meshMessageDao(): MeshMessageDao

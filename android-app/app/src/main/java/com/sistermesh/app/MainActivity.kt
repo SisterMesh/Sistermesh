@@ -17,7 +17,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             SisterMeshTheme {
                 val app = application as SisterMeshApplication
-                val vm: AppViewModel = viewModel(factory = AppViewModelFactory(app.repository, app.nearbyManager))
+                val vm: AppViewModel = viewModel(
+                    factory = AppViewModelFactory(
+                        app.repository,
+                        app.nearbyManager,
+                        app.authRepository,
+                        app.syncEngine,
+                        app.syncWorkScheduler,
+                        app.connectivityStatus
+                    )
+                )
                 AppNav(vm)
             }
         }

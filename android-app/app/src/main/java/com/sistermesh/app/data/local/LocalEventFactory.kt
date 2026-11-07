@@ -17,13 +17,15 @@ internal object LocalEventFactory {
         urgency: String,
         units: Int,
         originDeviceId: String,
-        localCreatedAt: String
+        localCreatedAt: String,
+        ownerAccountId: String? = null
     ) = event(
         eventType = "request.create",
         localEntityId = localId,
         entityId = null,
         originDeviceId = originDeviceId,
         localCreatedAt = localCreatedAt,
+        ownerAccountId = ownerAccountId,
         payload = JSONObject()
             .put("requestedBloodGroup", apiBloodGroup(bloodGroup))
             .put("urgency", urgency)
@@ -40,7 +42,8 @@ internal object LocalEventFactory {
         payload: String,
         correlationId: String? = null,
         dependsOnEventId: String? = null,
-        blockedReason: Pair<String, String>? = null
+        blockedReason: Pair<String, String>? = null,
+        ownerAccountId: String? = null
     ) = SyncEventEntity(
         eventId = UUID.randomUUID().toString(),
         eventType = eventType,
@@ -52,6 +55,7 @@ internal object LocalEventFactory {
         payloadJson = payload,
         status = if (blockedReason == null) "PENDING" else "BLOCKED",
         dependsOnEventId = dependsOnEventId,
+        ownerAccountId = ownerAccountId,
         serverErrorCode = blockedReason?.first,
         serverExplanation = blockedReason?.second
     )

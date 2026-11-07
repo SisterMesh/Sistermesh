@@ -45,7 +45,8 @@ data class EmergencyRequestEntity(
     val decision: String = "NONE",
     val confirmed: Boolean = false,
     val isDemo: Boolean = false,
-    val syncStatus: String = "LOCAL"
+    val syncStatus: String = "LOCAL",
+    val lastServerCursor: String? = null
 )
 
 @Entity(
@@ -140,6 +141,7 @@ data class SyncEventEntity(
     val payloadJson: String,
     val status: String = "PENDING",
     val dependsOnEventId: String? = null,
+    val ownerAccountId: String? = null,
     val attemptCount: Int = 0,
     val lastAttemptedAt: String? = null,
     val serverStatus: String? = null,
@@ -157,7 +159,8 @@ data class DeviceInfoEntity(
     val registrationStatus: String = "LOCAL_ONLY",
     val registeredAt: String? = null,
     val lastSyncAt: String? = null,
-    val revokedAt: String? = null
+    val revokedAt: String? = null,
+    val accountUserId: String? = null
 )
 
 @Entity(tableName = "sync_checkpoints")
@@ -166,6 +169,30 @@ data class SyncCheckpointEntity(
     val lastCursor: String = "0",
     val pendingCursor: String? = null,
     val updatedAt: String
+)
+
+@Entity(
+    tableName = "sync_conflicts",
+    indices = [Index(value = ["eventId"]), Index(value = ["occurredAt"])]
+)
+data class SyncConflictEntity(
+    @PrimaryKey val conflictId: String,
+    val eventId: String?,
+    val eventType: String?,
+    val entityId: String?,
+    val errorCode: String,
+    val explanation: String,
+    val payloadJson: String,
+    val occurredAt: String,
+    val source: String
+)
+
+@Entity(tableName = "sync_state")
+data class SyncStateEntity(
+    @PrimaryKey val id: Int = 1,
+    val status: String = "IDLE",
+    val lastAttemptAt: String? = null,
+    val lastError: String? = null
 )
 
 @Entity(tableName = "app_metadata")

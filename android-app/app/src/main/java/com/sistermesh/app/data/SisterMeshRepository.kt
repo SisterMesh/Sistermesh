@@ -11,6 +11,7 @@ import com.sistermesh.app.data.local.RequestActivityEntity
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import com.sistermesh.app.data.local.SyncCheckpointEntity
 import com.sistermesh.app.data.local.SyncEventEntity
+import com.sistermesh.app.data.local.SyncStateEntity
 import com.sistermesh.app.data.local.toDomain
 import com.sistermesh.app.data.local.toIncomingDomain
 import com.sistermesh.app.data.local.toReceipt
@@ -27,6 +28,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     private val events = database.syncEventDao()
     private val devices = database.deviceInfoDao()
     private val checkpoints = database.syncCheckpointDao()
+    private val conflicts = database.syncConflictDao()
+    private val syncStates = database.syncStateDao()
     private val metadata = database.appMetadataDao()
 
     suspend fun initialize() {
@@ -41,6 +44,9 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             }
             if (checkpoints.get() == null) {
                 checkpoints.upsert(SyncCheckpointEntity(updatedAt = LocalEventFactory.now()))
+            }
+            if (syncStates.get() == null) {
+                syncStates.upsert(SyncStateEntity())
             }
             val appMetadata = metadata.get()
             if (appMetadata == null) {
@@ -60,6 +66,12 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     fun observePendingEvents() = events.observePending()
     fun observeEventsForReview() = events.observeNeedsReview()
     fun observeAllEvents() = events.observeAll()
+    fun observeDeviceInfo() = devices.observe()
+    fun observeSyncState() = syncStates.observe()
+    fun observePendingSyncCount() = events.observePendingCount()
+    fun observeFailedSyncCount() = events.observeFailedCount()
+    fun observeConflicts() = conflicts.observeAll()
+    fun observeConflictCount() = conflicts.observeCount()
 
     suspend fun getProfile(): Profile? = profiles.get()?.toDomain()
     suspend fun getPreferences(): Pair<Boolean, String> {
@@ -95,7 +107,13 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         }
     }
 
-    suspend fun createRequest(group: String, urgency: Urgency, units: Int, note: String): BloodRequest {
+    suspend fun createRequest(
+        group: String,
+        urgency: Urgency,
+        units: Int,
+        note: String,
+        ownerAccountId: String? = null
+    ): BloodRequest {
         val now = LocalEventFactory.now()
         val localId = "REQ-${UUID.randomUUID().toString().take(8).uppercase()}"
         val profile = profiles.get()
@@ -119,7 +137,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             urgency = urgency.name,
             units = units,
             originDeviceId = deviceId,
-            localCreatedAt = now
+            localCreatedAt = now,
+            ownerAccountId = ownerAccountId
         )
 
         database.withTransaction {
@@ -130,7 +149,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         return request.toDomain(emptyList())
     }
 
-    suspend fun cancelRequest(localId: String) {
+    suspend fun cancelRequest(localId: String, ownerAccountId: String? = null) {
         val now = LocalEventFactory.now()
         val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }.clientDeviceId.toString()
         database.withTransaction {
@@ -146,7 +165,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                 dependsOnEventId = events.latestForEntity(localId)?.eventId,
                 blockedReason = if (request.serverId == null) {
                     "WAITING_FOR_SERVER_ENTITY_ID" to "This operation is waiting for its request to receive a server ID."
-                } else null
+                } else null,
+                ownerAccountId = ownerAccountId
             )
             requests.upsert(request.copy(status = RequestStatus.CANCELLED.name, updatedAt = now, syncStatus = "PENDING"))
             activities.insertIfAbsent(activity(localId, "CANCELLED", "HEALTH_WORKER", now))
@@ -154,7 +174,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         }
     }
 
-    suspend fun respond(localId: String, accept: Boolean) {
+    suspend fun respond(localId: String, accept: Boolean, ownerAccountId: String? = null) {
         val request = requests.get(localId) ?: return
         if (request.kind != "INCOMING" || request.decision != Decision.NONE.name) return
         val now = LocalEventFactory.now()
@@ -170,7 +190,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             payload = "{}",
             blockedReason = if (request.serverId == null) {
                 "WAITING_FOR_SERVER_ENTITY_ID" to "This response is waiting for the request's server ID."
-            } else null
+            } else null,
+            ownerAccountId = ownerAccountId
         )
         val responseStatus = if (accept) ResponseStatus.ACCEPTED else ResponseStatus.DECLINED
         val donorRef = deviceId.takeLast(4).uppercase()
@@ -198,7 +219,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         }
     }
 
-    suspend fun withdrawResponse(localId: String) {
+    suspend fun withdrawResponse(localId: String, ownerAccountId: String? = null) {
         val request = requests.get(localId) ?: return
         val profile = profiles.get()
         val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }.clientDeviceId.toString()
@@ -217,7 +238,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                 dependsOnEventId = events.latestForEntity(localId)?.eventId,
                 blockedReason = if (request.serverId == null) {
                     "WAITING_FOR_SERVER_ENTITY_ID" to "This withdrawal is waiting for the request's server ID."
-                } else null
+                } else null,
+                ownerAccountId = ownerAccountId
             )
             responses.upsert(response.copy(status = ResponseStatus.WITHDRAWN.name, syncStatus = "PENDING"))
             requests.upsert(request.copy(decision = Decision.WITHDRAWN.name, updatedAt = now, syncStatus = "PENDING"))
@@ -232,7 +254,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         urgency: Urgency?,
         units: Int?,
         expiresAt: String?,
-        expectedUpdatedAt: String?
+        expectedUpdatedAt: String?,
+        ownerAccountId: String? = null
     ) {
         val request = requests.get(localId) ?: return
         val now = LocalEventFactory.now()
@@ -244,7 +267,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         expectedUpdatedAt?.let { patch.put("expectedUpdatedAt", it) }
 
         val blockedReason = when {
-            expectedUpdatedAt == null -> "MISSING_SERVER_VERSION" to "A server update timestamp is required before this update can sync."
+            expectedUpdatedAt == null || request.lastServerCursor == null ->
+                "MISSING_SERVER_VERSION" to "Download the latest server version before this update can sync."
             request.serverId == null -> "WAITING_FOR_SERVER_ENTITY_ID" to "This update is waiting for the request's server ID."
             else -> null
         }
@@ -259,7 +283,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                 localCreatedAt = now,
                 payload = patch.toString(),
                 dependsOnEventId = events.latestForEntity(localId)?.eventId,
-                blockedReason = blockedReason
+                blockedReason = blockedReason,
+                ownerAccountId = ownerAccountId
             )
             requests.upsert(
                 request.copy(
@@ -275,7 +300,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         }
     }
 
-    suspend fun confirmDonation(requestId: String, donorRef: String): String {
+    suspend fun confirmDonation(requestId: String, donorRef: String, ownerAccountId: String? = null): String {
         val request = requireNotNull(requests.get(requestId)) { "Emergency request not found: $requestId" }
         val response = responses.find(requestId, donorRef)
         val now = LocalEventFactory.now()
@@ -300,7 +325,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                 localCreatedAt = now,
                 payload = payload.toString(),
                 dependsOnEventId = events.latestForEntity(requestId)?.eventId,
-                blockedReason = blockedReason
+                blockedReason = blockedReason,
+                ownerAccountId = ownerAccountId
             )
             requests.upsert(
                 request.copy(status = RequestStatus.COMPLETED.name, updatedAt = now, syncStatus = "PENDING")

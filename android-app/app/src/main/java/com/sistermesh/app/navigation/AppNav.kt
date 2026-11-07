@@ -48,6 +48,8 @@ fun AppNav(vm: AppViewModel) {
         }
         composable("history") { HistoryScreen(vm, nav) }
         composable("profile") { ProfileScreen(vm, nav) }
+        composable("sync_account") { SyncAccountScreen(vm, nav) }
+        composable("sync_review") { SyncReviewScreen(vm, nav) }
 
         // Donor flow
         composable("incoming/{id}") { IncomingRequestScreen(vm, nav, it.arg("id")) }

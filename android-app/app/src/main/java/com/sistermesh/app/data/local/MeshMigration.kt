@@ -118,3 +118,40 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_mesh_request_routes_expiresAt` ON `mesh_request_routes` (`expiresAt`)")
     }
 }
+
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `lastServerCursor` TEXT")
+        db.execSQL("ALTER TABLE `sync_events` ADD COLUMN `ownerAccountId` TEXT")
+        db.execSQL("ALTER TABLE `device_info` ADD COLUMN `accountUserId` TEXT")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `sync_conflicts` (
+                `conflictId` TEXT NOT NULL,
+                `eventId` TEXT,
+                `eventType` TEXT,
+                `entityId` TEXT,
+                `errorCode` TEXT NOT NULL,
+                `explanation` TEXT NOT NULL,
+                `payloadJson` TEXT NOT NULL,
+                `occurredAt` TEXT NOT NULL,
+                `source` TEXT NOT NULL,
+                PRIMARY KEY(`conflictId`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_sync_conflicts_eventId` ON `sync_conflicts` (`eventId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_sync_conflicts_occurredAt` ON `sync_conflicts` (`occurredAt`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `sync_state` (
+                `id` INTEGER NOT NULL,
+                `status` TEXT NOT NULL,
+                `lastAttemptAt` TEXT,
+                `lastError` TEXT,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+    }
+}

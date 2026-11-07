@@ -263,6 +263,9 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
             }
         }
 
+        SectionTitle("Offline synchronization")
+        SyncStatusCard(vm, nav)
+
         SectionTitle("Preferences")
         SmCard {
             SettingRow(Icons.Rounded.Language, "Language", vm.language) {
