@@ -10,6 +10,7 @@ import com.sistermesh.app.data.local.MIGRATION_2_3
 import com.sistermesh.app.data.local.MIGRATION_3_4
 import com.sistermesh.app.data.local.MIGRATION_4_5
 import com.sistermesh.app.data.local.EmergencyRequestEntity
+import com.sistermesh.app.data.local.ProfileEntity
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -213,6 +214,170 @@ class SisterMeshRepositoryTest {
         } finally {
             if (reopened?.isOpen == true) reopened?.close()
             context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun roomOpensExistingVersionFourDatabaseAndPreservesAllProfileAndRequestData() = runBlocking {
+        val name = "sistermesh-v4-to-v5-${UUID.randomUUID()}.db"
+        context.deleteDatabase(name)
+
+        val existingProfile = ProfileEntity(
+            role = "INDIVIDUAL",
+            name = "Legacy Member",
+            bloodGroup = "A+",
+            area = "Ikeja",
+            phone = "0000000000",
+            facility = "",
+            facilityLocation = "",
+            designation = "",
+            isAvailable = false,
+            language = "Yoruba"
+        )
+        val existingRequest = EmergencyRequestEntity(
+            localId = "v4-request",
+            serverId = "server-v4-request",
+            kind = "OUTGOING",
+            bloodGroup = "O-",
+            urgency = "CRITICAL",
+            units = 2,
+            note = "Preserve this local note",
+            facility = "Lagos Central",
+            facilityId = "facility-lagos-central",
+            isForSelf = false,
+            beneficiaryName = "Request Beneficiary",
+            beneficiaryRelationship = "Sibling",
+            additionalInfo = "Available after 4pm",
+            reviewReason = "Awaiting facility verification",
+            createdAt = "2026-01-12T10:15:00Z",
+            updatedAt = "2026-01-12T10:20:00Z",
+            status = "PENDING_FACILITY_VERIFICATION",
+            devicesFound = 3,
+            delivered = 1,
+            distance = "2 km",
+            receivedAt = "2026-01-12T10:16:00Z",
+            expiresIn = "3 hours",
+            decision = "NONE",
+            confirmed = false,
+            isDemo = false,
+            syncStatus = "PENDING",
+            lastServerCursor = "42"
+        )
+
+        var upgradedDatabase: SisterMeshDatabase? = null
+        try {
+            val roomV5Database = fileDatabase(name)
+            try {
+                roomV5Database.profileDao().upsert(existingProfile)
+                roomV5Database.emergencyRequestDao().upsert(existingRequest)
+            } finally {
+                roomV5Database.close()
+            }
+
+            // Room v4 differs from v5 only by the reviewedAt column added in MIGRATION_4_5.
+            val legacyDatabase = context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null)
+            try {
+                legacyDatabase.execSQL("PRAGMA foreign_keys = OFF")
+                legacyDatabase.execSQL(
+                    """
+                    CREATE TABLE emergency_requests_v4 (
+                        `localId` TEXT NOT NULL,
+                        `serverId` TEXT,
+                        `kind` TEXT NOT NULL,
+                        `bloodGroup` TEXT NOT NULL,
+                        `urgency` TEXT NOT NULL,
+                        `units` INTEGER NOT NULL,
+                        `note` TEXT NOT NULL,
+                        `facility` TEXT NOT NULL,
+                        `facilityId` TEXT,
+                        `isForSelf` INTEGER NOT NULL,
+                        `beneficiaryName` TEXT,
+                        `beneficiaryRelationship` TEXT,
+                        `additionalInfo` TEXT,
+                        `reviewReason` TEXT,
+                        `createdAt` TEXT NOT NULL,
+                        `updatedAt` TEXT,
+                        `status` TEXT NOT NULL,
+                        `devicesFound` INTEGER NOT NULL,
+                        `delivered` INTEGER NOT NULL,
+                        `distance` TEXT NOT NULL,
+                        `receivedAt` TEXT NOT NULL,
+                        `expiresIn` TEXT NOT NULL,
+                        `decision` TEXT NOT NULL,
+                        `confirmed` INTEGER NOT NULL,
+                        `isDemo` INTEGER NOT NULL,
+                        `syncStatus` TEXT NOT NULL,
+                        `lastServerCursor` TEXT,
+                        PRIMARY KEY(`localId`)
+                    )
+                    """.trimIndent()
+                )
+                legacyDatabase.execSQL(
+                    """
+                    INSERT INTO emergency_requests_v4 (
+                        localId, serverId, kind, bloodGroup, urgency, units, note, facility, facilityId,
+                        isForSelf, beneficiaryName, beneficiaryRelationship, additionalInfo, reviewReason,
+                        createdAt, updatedAt, status, devicesFound, delivered, distance, receivedAt, expiresIn,
+                        decision, confirmed, isDemo, syncStatus, lastServerCursor
+                    )
+                    SELECT
+                        localId, serverId, kind, bloodGroup, urgency, units, note, facility, facilityId,
+                        isForSelf, beneficiaryName, beneficiaryRelationship, additionalInfo, reviewReason,
+                        createdAt, updatedAt, status, devicesFound, delivered, distance, receivedAt, expiresIn,
+                        decision, confirmed, isDemo, syncStatus, lastServerCursor
+                    FROM emergency_requests
+                    """.trimIndent()
+                )
+                legacyDatabase.execSQL("DROP TABLE emergency_requests")
+                legacyDatabase.execSQL("ALTER TABLE emergency_requests_v4 RENAME TO emergency_requests")
+                legacyDatabase.execSQL(
+                    "CREATE INDEX `index_emergency_requests_kind_status` ON `emergency_requests` (`kind`, `status`)"
+                )
+                legacyDatabase.execSQL(
+                    "CREATE INDEX `index_emergency_requests_serverId` ON `emergency_requests` (`serverId`)"
+                )
+                legacyDatabase.version = 4
+
+                assertEquals(4, legacyDatabase.version)
+                legacyDatabase.rawQuery("PRAGMA table_info('emergency_requests')", null).use { cursor ->
+                    val columns = buildSet {
+                        while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+                    }
+                    assertFalse(columns.contains("reviewedAt"))
+                }
+                legacyDatabase.rawQuery("SELECT COUNT(*) FROM profiles", null).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                }
+                legacyDatabase.rawQuery("SELECT COUNT(*) FROM emergency_requests", null).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                }
+            } finally {
+                legacyDatabase.close()
+            }
+
+            upgradedDatabase = Room.databaseBuilder(context, SisterMeshDatabase::class.java, name)
+                .addMigrations(MIGRATION_4_5)
+                .allowMainThreadQueries()
+                .build()
+
+            assertEquals(5, upgradedDatabase.openHelper.writableDatabase.version)
+            assertEquals(existingProfile, upgradedDatabase.profileDao().get())
+            val migratedRequest = upgradedDatabase.emergencyRequestDao().get("v4-request")
+            assertEquals(existingRequest, migratedRequest)
+            assertNull(migratedRequest?.reviewedAt)
+            assertEquals(1, upgradedDatabase.emergencyRequestDao().count())
+            upgradedDatabase.openHelper.writableDatabase
+                .query("PRAGMA table_info('emergency_requests')").use { cursor ->
+                    val columns = buildSet {
+                        while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+                    }
+                    assertTrue(columns.contains("reviewedAt"))
+                }
+        } finally {
+            upgradedDatabase?.close()
+            context.deleteDatabase(name)
         }
     }
 
