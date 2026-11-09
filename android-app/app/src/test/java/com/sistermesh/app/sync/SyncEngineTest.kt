@@ -42,6 +42,7 @@ class SyncEngineTest {
             assertEquals(SyncOutcome.RETRY, firstRun)
             assertTrue(api.ackSawPersistedPage)
             assertNotNull(requestBeforeRetry)
+            assertEquals("2026-11-07T11:30:00Z", requestBeforeRetry?.reviewedAt)
             assertEquals("0", pendingCheckpoint?.lastCursor)
             assertEquals("1", pendingCheckpoint?.pendingCursor)
 
@@ -176,12 +177,15 @@ class SyncEngineTest {
                     serverErrorCode = "STALE_VERSION"
                 )
             )
-            val api = FakeSyncApi(fixture.user, database)
+            assertEquals("Keep this local note", database.emergencyRequestDao().get("local-request")?.note)
+            assertTrue(database.syncEventDao().hasUnresolvedForEntity("local-request"))
+            val api = FakeSyncApi(fixture.user, database).apply { serverRequestIsMine = true }
             val engine = SyncEngine(database, api, AuthRepository(api, MemoryTokenStore()))
 
             assertEquals(SyncOutcome.SUCCESS, engine.run())
             val request = database.emergencyRequestDao().get("local-request")
 
+            assertEquals("Keep this local note", api.requestNoteAtAck)
             assertEquals("A-", request?.bloodGroup)
             assertEquals("CRITICAL", request?.urgency)
             assertEquals(2, request?.units)
@@ -308,8 +312,10 @@ class SyncEngineTest {
         var registerDeviceCalls = 0
         var loseFirstAckResponse = false
         var ackSawPersistedPage = false
+        var requestNoteAtAck: String? = null
         var registrationError: BackendHttpException? = null
         var serverCursor = "0"
+        var serverRequestIsMine = false
         val batchIds = mutableListOf<String>()
         val uploadedEventIds = mutableListOf<String>()
         val uploadStatuses = ArrayDeque<String>()
@@ -402,7 +408,9 @@ class SyncEngineTest {
                             updatedAt = "2026-11-07T11:00:00Z",
                             facilityName = "Community Clinic",
                             facilityLocality = "Central",
-                            facilityState = "Rivers"
+                            facilityState = "Rivers",
+                            isMine = serverRequestIsMine,
+                            reviewedAt = "2026-11-07T11:30:00Z"
                         )
                     )
                 )
@@ -411,6 +419,7 @@ class SyncEngineTest {
 
         override suspend fun acknowledgeCheckpoint(accessToken: String, deviceId: String, cursor: String) {
             val request = databaseForAck.emergencyRequestDao().getByServerId(SERVER_REQUEST_ID)
+            requestNoteAtAck = request?.note
             val checkpoint = databaseForAck.syncCheckpointDao().get()
             ackSawPersistedPage = request != null && checkpoint?.pendingCursor == cursor
             serverCursor = cursor

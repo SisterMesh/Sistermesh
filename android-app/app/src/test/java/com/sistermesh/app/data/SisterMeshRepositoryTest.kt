@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.sistermesh.app.data.local.MIGRATION_1_2
 import com.sistermesh.app.data.local.MIGRATION_2_3
 import com.sistermesh.app.data.local.MIGRATION_3_4
+import com.sistermesh.app.data.local.MIGRATION_4_5
 import com.sistermesh.app.data.local.EmergencyRequestEntity
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import kotlinx.coroutines.flow.first
@@ -202,12 +203,12 @@ class SisterMeshRepositoryTest {
             reopened = fileDatabase(databaseName)
             val secondRepository = SisterMeshRepository(reopened!!)
             secondRepository.initialize()
-            val persistedRequest = secondRepository.observeRequests().first().single { it.id == request.id }
+            val persistedRequest = secondRepository.observeFacilityRequests().first().single { it.id == request.id }
             assertEquals("Persistent Worker", secondRepository.getProfile()?.name)
             assertEquals("A+", persistedRequest.bloodGroup)
             assertEquals(eventId, secondRepository.observePendingEvents().first().single().eventId)
             assertEquals(deviceId, reopened!!.deviceInfoDao().get()?.clientDeviceId?.toString())
-            assertEquals(4, reopened!!.openHelper.writableDatabase.version)
+            assertEquals(5, reopened!!.openHelper.writableDatabase.version)
             assertEquals(request.id, persistedRequest.id)
         } finally {
             if (reopened?.isOpen == true) reopened?.close()
@@ -302,6 +303,11 @@ class SisterMeshRepositoryTest {
             MIGRATION_1_2.migrate(migrated)
             MIGRATION_2_3.migrate(migrated)
             MIGRATION_3_4.migrate(migrated)
+            val requestsBeforeV5 = migrated.query("SELECT COUNT(*) FROM emergency_requests")
+            assertTrue(requestsBeforeV5.moveToFirst())
+            val requestCountBeforeV5 = requestsBeforeV5.getInt(0)
+            requestsBeforeV5.close()
+            MIGRATION_4_5.migrate(migrated)
             val profile = migrated.query("SELECT name FROM profiles WHERE id = 1")
             assertTrue(profile.moveToFirst())
             assertEquals("Legacy Worker", profile.getString(0))
@@ -310,6 +316,16 @@ class SisterMeshRepositoryTest {
             assertTrue(request.moveToFirst())
             assertEquals("local note", request.getString(0))
             request.close()
+            val migratedReviewTimestamp = migrated.query(
+                "SELECT reviewedAt FROM emergency_requests WHERE localId = 'legacy-request'"
+            )
+            assertTrue(migratedReviewTimestamp.moveToFirst())
+            assertTrue(migratedReviewTimestamp.isNull(0))
+            migratedReviewTimestamp.close()
+            val requestsAfterV5 = migrated.query("SELECT COUNT(*) FROM emergency_requests")
+            assertTrue(requestsAfterV5.moveToFirst())
+            assertEquals(requestCountBeforeV5, requestsAfterV5.getInt(0))
+            requestsAfterV5.close()
             val meshTables = migrated.query(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('mesh_messages', 'mesh_acknowledgements')"
             )

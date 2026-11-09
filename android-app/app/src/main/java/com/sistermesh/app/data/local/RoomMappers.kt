@@ -43,6 +43,7 @@ fun RequestWithResponses.toDomain() = BloodRequest(
     beneficiaryRelationship = request.beneficiaryRelationship,
     additionalInfo = request.additionalInfo,
     reviewReason = request.reviewReason,
+    reviewedAt = request.reviewedAt,
     devicesFound = request.devicesFound,
     delivered = request.delivered,
     responses = responses.map { it.toDomain() }

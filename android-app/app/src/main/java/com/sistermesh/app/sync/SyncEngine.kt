@@ -454,7 +454,7 @@ class SyncEngine(
                 .ifBlank { "Health facility" }
             val current = existing
             val canSeePrivateDetails = serverRequest.isMine || user.role == "HEALTH_WORKER"
-            val publishedToDonors = status == RequestStatus.OPEN || status == RequestStatus.PARTIALLY_FILLED
+            val publishedToDonors = status == "OPEN" || status == "PARTIALLY_FILLED"
             val requestKind = when {
                 user.role == "HEALTH_WORKER" -> "FACILITY"
                 serverRequest.isMine -> "OUTGOING"
@@ -483,15 +483,36 @@ class SyncEngine(
                 units = if (preserveLocalEdits) current?.units ?: serverRequest.units else serverRequest.units,
                 facility = facility,
                 facilityId = serverRequest.facilityId.ifBlank { current?.facilityId.orEmpty() }.takeIf { it.isNotBlank() },
-                isForSelf = if (canSeePrivateDetails) serverRequest.isForSelf ?: current?.isForSelf ?: true else true,
-                beneficiaryName = if (canSeePrivateDetails) serverRequest.beneficiaryName else null,
-                beneficiaryRelationship = if (canSeePrivateDetails) serverRequest.beneficiaryRelationship else null,
-                additionalInfo = if (canSeePrivateDetails) serverRequest.additionalInfo else null,
-                note = if (canSeePrivateDetails) serverRequest.additionalInfo.orEmpty() else "",
+                isForSelf = if (!canSeePrivateDetails) true else if (preserveLocalEdits) {
+                    current?.isForSelf ?: serverRequest.isForSelf ?: true
+                } else {
+                    serverRequest.isForSelf ?: current?.isForSelf ?: true
+                },
+                beneficiaryName = if (!canSeePrivateDetails) null else if (preserveLocalEdits) {
+                    current?.beneficiaryName ?: serverRequest.beneficiaryName
+                } else {
+                    serverRequest.beneficiaryName
+                },
+                beneficiaryRelationship = if (!canSeePrivateDetails) null else if (preserveLocalEdits) {
+                    current?.beneficiaryRelationship ?: serverRequest.beneficiaryRelationship
+                } else {
+                    serverRequest.beneficiaryRelationship
+                },
+                additionalInfo = if (!canSeePrivateDetails) null else if (preserveLocalEdits) {
+                    current?.additionalInfo ?: serverRequest.additionalInfo
+                } else {
+                    serverRequest.additionalInfo
+                },
+                note = if (!canSeePrivateDetails) "" else if (preserveLocalEdits) {
+                    current?.note ?: serverRequest.additionalInfo.orEmpty()
+                } else {
+                    serverRequest.additionalInfo.orEmpty()
+                },
                 reviewReason = if (canSeePrivateDetails) serverRequest.reviewReason else null,
+                reviewedAt = serverRequest.reviewedAt,
                 createdAt = current?.createdAt ?: serverRequest.createdAt,
                 updatedAt = if (preserveLocalEdits) current?.updatedAt ?: serverRequest.updatedAt else serverRequest.updatedAt,
-                status = if (preserveLocalEdits) current?.status ?: status else status,
+                status = status,
                 receivedAt = if (current?.receivedAt.isNullOrBlank()) displayTime(change.occurredAt) else current!!.receivedAt,
                 expiresIn = expiryText(serverRequest.expiresAt),
                 lastServerCursor = change.cursor,

@@ -26,20 +26,20 @@ object MockData {
     fun requests() = listOf(
         BloodRequest(
             "REQ-2190", "O-", Urgency.CRITICAL, 1, "", "Trans-Amadi General", "12 Oct 2026, 14:20",
-            RequestStatus.COMPLETED, 5, 5,
-            listOf(
+            RequestStatus.COMPLETED, devicesFound = 5, delivered = 5,
+            responses = listOf(
                 DonorResponse("91BE", "Trans-Amadi", "About 2.0 km", ResponseStatus.CONFIRMED),
                 DonorResponse("0D4A", "Rumuola", "About 3.1 km", ResponseStatus.DECLINED)
             )
         ),
         BloodRequest(
             "REQ-1744", "B+", Urgency.URGENT, 2, "", "Trans-Amadi General", "29 Sep 2026, 09:05",
-            RequestStatus.EXPIRED, 3, 3,
-            listOf(DonorResponse("C52F", "Diobu", "About 4.2 km", ResponseStatus.EXPIRED))
+            RequestStatus.EXPIRED, devicesFound = 3, delivered = 3,
+            responses = listOf(DonorResponse("C52F", "Diobu", "About 4.2 km", ResponseStatus.EXPIRED))
         ),
         BloodRequest(
             "REQ-1102", "A-", Urgency.CRITICAL, 1, "", "Trans-Amadi General", "14 Sep 2026, 22:40",
-            RequestStatus.CANCELLED, 2, 2
+            RequestStatus.CANCELLED, devicesFound = 2, delivered = 2
         )
     )
 

@@ -84,7 +84,8 @@ data class BloodRequest(
     val reviewReason: String? = null,
     val devicesFound: Int = 0,
     val delivered: Int = 0,
-    val responses: List<DonorResponse> = emptyList()
+    val responses: List<DonorResponse> = emptyList(),
+    val reviewedAt: String? = null
 ) {
     val accepted get() = responses.count { it.status == ResponseStatus.ACCEPTED || it.status == ResponseStatus.CONFIRMED }
     val declined get() = responses.count { it.status == ResponseStatus.DECLINED }

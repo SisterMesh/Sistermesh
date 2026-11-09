@@ -41,6 +41,7 @@ data class EmergencyRequestEntity(
     val beneficiaryRelationship: String? = null,
     val additionalInfo: String? = null,
     val reviewReason: String? = null,
+    val reviewedAt: String? = null,
     val createdAt: String,
     val updatedAt: String? = null,
     val status: String,
