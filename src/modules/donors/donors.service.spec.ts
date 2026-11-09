@@ -6,7 +6,7 @@ import { DonorsService } from './donors.service';
 describe('DonorsService', () => {
   const actor: AuthenticatedUser = {
     id: '00000000-0000-4000-8000-000000000061',
-    role: UserRole.DONOR,
+    role: UserRole.INDIVIDUAL,
     status: 'ACTIVE',
   };
 
@@ -23,7 +23,7 @@ describe('DonorsService', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: actor.id,
-          role: UserRole.DONOR,
+          role: UserRole.INDIVIDUAL,
           status: AccountStatus.ACTIVE,
         }),
       },

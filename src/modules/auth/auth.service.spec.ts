@@ -10,7 +10,7 @@ import { RegisterDonorDto } from './dto/register-donor.dto';
 describe('AuthService', () => {
   const user = {
     id: '00000000-0000-4000-8000-000000000031',
-    role: UserRole.DONOR,
+    role: UserRole.INDIVIDUAL,
     status: AccountStatus.ACTIVE,
     displayName: 'Test Donor',
     phoneNumber: '+2348012345678',
@@ -45,7 +45,7 @@ describe('AuthService', () => {
     const createArg = prismaMock.user.create.mock.calls[0][0];
     const storedHash = createArg.data.passwordHash as string;
 
-    expect(createArg.data.role).toBe(UserRole.DONOR);
+    expect(createArg.data.role).toBe(UserRole.INDIVIDUAL);
     expect(storedHash).not.toBe(dto.password);
     await expect(bcrypt.compare(dto.password, storedHash)).resolves.toBe(true);
     expect(session.user).toEqual(user);

@@ -66,30 +66,27 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthSession> {
-    if (dto.role !== UserRole.DONOR && dto.role !== UserRole.HEALTH_WORKER) {
-      throw new BadRequestException('Only donor and health-worker roles can register.');
+    const role = dto.role === UserRole.DONOR ? UserRole.INDIVIDUAL : dto.role;
+    if (role !== UserRole.INDIVIDUAL && role !== UserRole.HEALTH_WORKER) {
+      throw new BadRequestException('Only individual and health-worker accounts can register.');
     }
     this.validateRegistration(dto.displayName, dto.password);
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
     try {
       const user = await this.prisma.user.create({
         data: {
-          role: dto.role as UserRole,
+          role: role as UserRole,
           status: AccountStatus.ACTIVE,
           displayName: dto.displayName.trim(),
           phoneNumber: dto.phoneNumber,
           passwordHash,
-          ...(dto.role === UserRole.DONOR
+          ...(role === UserRole.HEALTH_WORKER
             ? {
-                donorProfile: {
-                  create: { bloodGroup: null, isProfileComplete: false },
-                },
-              }
-            : {
                 healthWorkerProfile: {
                   create: { verificationStatus: 'PENDING', facilityId: null },
                 },
-              }),
+              }
+            : {}),
         },
         select: PUBLIC_USER_SELECT,
       });
@@ -108,7 +105,7 @@ export class AuthService {
     try {
       const user = await this.prisma.user.create({
         data: {
-          role: UserRole.DONOR,
+          role: UserRole.INDIVIDUAL,
           status: AccountStatus.ACTIVE,
           displayName: dto.displayName.trim(),
           phoneNumber: dto.phoneNumber,

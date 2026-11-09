@@ -23,7 +23,8 @@ fun ProfileEntity.toDomain() = Profile(
     phone = phone,
     facility = facility,
     facilityLocation = facilityLocation,
-    designation = designation
+    designation = designation,
+    facilityId = facilityId
 )
 
 fun RequestWithResponses.toDomain() = BloodRequest(
@@ -34,7 +35,14 @@ fun RequestWithResponses.toDomain() = BloodRequest(
     note = request.note,
     facility = request.facility,
     createdAt = request.createdAt.toDisplayTimestamp(),
-    status = RequestStatus.valueOf(request.status),
+    status = request.status.toRequestStatus(),
+    serverUpdatedAt = request.updatedAt,
+    facilityId = request.facilityId,
+    isForSelf = request.isForSelf,
+    beneficiaryName = request.beneficiaryName,
+    beneficiaryRelationship = request.beneficiaryRelationship,
+    additionalInfo = request.additionalInfo,
+    reviewReason = request.reviewReason,
     devicesFound = request.devicesFound,
     delivered = request.delivered,
     responses = responses.map { it.toDomain() }
@@ -60,7 +68,8 @@ fun EmergencyRequestEntity.toIncomingDomain() = IncomingRequest(
     expiresIn = expiresIn,
     units = units,
     decision = Decision.valueOf(decision),
-    confirmed = confirmed
+    confirmed = confirmed,
+    status = status.toRequestStatus()
 )
 
 fun DonationConfirmationEntity.toReceipt() = Receipt(
@@ -77,3 +86,13 @@ private fun String.toDisplayTimestamp(): String = runCatching {
         .atZone(ZoneId.systemDefault())
         .format(DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.getDefault()))
 }.getOrElse { this }
+
+private fun String.toRequestStatus(): RequestStatus = when (this) {
+    "PENDING_FACILITY_VERIFICATION" -> RequestStatus.PENDING_FACILITY_VERIFICATION
+    "NEEDS_INFORMATION" -> RequestStatus.NEEDS_INFORMATION
+    "REJECTED" -> RequestStatus.REJECTED
+    "OPEN" -> RequestStatus.OPEN
+    "PARTIALLY_FILLED" -> RequestStatus.PARTIALLY_FILLED
+    "FULFILLED" -> RequestStatus.FULFILLED
+    else -> RequestStatus.valueOf(this)
+}

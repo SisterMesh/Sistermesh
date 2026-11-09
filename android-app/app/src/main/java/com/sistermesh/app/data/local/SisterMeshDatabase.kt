@@ -7,6 +7,7 @@ import androidx.room.TypeConverters
 @Database(
     entities = [
         ProfileEntity::class,
+        FacilityEntity::class,
         EmergencyRequestEntity::class,
         DonorResponseEntity::class,
         DonationConfirmationEntity::class,
@@ -23,12 +24,13 @@ import androidx.room.TypeConverters
         SyncConflictEntity::class,
         SyncStateEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(RoomTypeConverters::class)
 abstract class SisterMeshDatabase : RoomDatabase() {
     abstract fun profileDao(): ProfileDao
+    abstract fun facilityDao(): FacilityDao
     abstract fun emergencyRequestDao(): EmergencyRequestDao
     abstract fun donorResponseDao(): DonorResponseDao
     abstract fun donationConfirmationDao(): DonationConfirmationDao

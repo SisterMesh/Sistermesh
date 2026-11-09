@@ -72,6 +72,7 @@ export class UsersService {
   }
 
   async setRole(admin: AuthenticatedUser | string, userId: string, role: UserRole) {
+    if (role === UserRole.DONOR) role = UserRole.INDIVIDUAL;
     const actorId = typeof admin === 'string' ? admin : admin.id;
     return this.prisma.$transaction(
       async (tx) => {
@@ -99,13 +100,7 @@ export class UsersService {
           data: { role },
           select: USER_PROFILE_SELECT,
         });
-        if (role === UserRole.DONOR) {
-          await tx.donorProfile.upsert({
-            where: { userId },
-            create: { userId, bloodGroup: null, isProfileComplete: false },
-            update: {},
-          });
-        } else if (role === UserRole.HEALTH_WORKER) {
+        if (role === UserRole.HEALTH_WORKER) {
           await tx.healthWorkerProfile.upsert({
             where: { userId },
             create: { userId, verificationStatus: 'PENDING', facilityId: null },

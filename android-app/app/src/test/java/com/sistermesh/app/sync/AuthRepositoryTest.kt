@@ -39,7 +39,7 @@ class AuthRepositoryTest {
         val auth = AuthRepository(api, tokenStore)
 
         assertThrows(AccountRoleMismatchException::class.java) {
-            runBlocking { auth.login("+2348012345678", "not-a-real-password", "DONOR") }
+            runBlocking { auth.login("+2348012345678", "not-a-real-password", "INDIVIDUAL") }
         }
 
         assertNull(tokenStore.value)
@@ -77,6 +77,11 @@ class AuthRepositoryTest {
         var getMeHandler: suspend (String) -> BackendUser = { loginSession.user }
 
         override suspend fun login(phoneNumber: String, password: String) = loginSession
+        override suspend fun registerIndividual(
+            displayName: String,
+            phoneNumber: String,
+            password: String
+        ) = loginSession
         override suspend fun registerDonor(
             displayName: String,
             phoneNumber: String,
@@ -84,6 +89,16 @@ class AuthRepositoryTest {
             bloodGroup: String,
             locality: String
         ) = loginSession
+        override suspend fun listFacilities() = emptyList<BackendFacility>()
+        override suspend fun createDonorProfile(accessToken: String, bloodGroup: String, locality: String) =
+            BackendDonorProfile("donor-1", bloodGroup, locality, true, true)
+        override suspend fun updateDonorProfile(
+            accessToken: String,
+            bloodGroup: String?,
+            locality: String?,
+            isAvailable: Boolean?
+        ) = BackendDonorProfile("donor-1", bloodGroup, locality, isAvailable ?: true, true)
+        override suspend fun getMyDonations(accessToken: String) = emptyList<BackendDonorResponse>()
         override suspend fun registerHealthWorker(
             displayName: String,
             phoneNumber: String,
@@ -116,7 +131,7 @@ class AuthRepositoryTest {
     }
 }
 
-private fun donorUser(role: String = "DONOR") = BackendUser(
+private fun donorUser(role: String = "INDIVIDUAL") = BackendUser(
     id = "user-1",
     role = role,
     status = "ACTIVE",

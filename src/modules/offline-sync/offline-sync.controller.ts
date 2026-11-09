@@ -62,7 +62,7 @@ export class OfflineSyncController {
   }
 
   @Post('devices/:deviceId/batches')
-  @Roles(UserRole.DONOR, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
   @ApiOperation({
     summary: 'Upload a batch of versioned offline coordination events.',
     description: 'Every event is processed independently. Retries must reuse clientBatchId and each eventId.',
@@ -79,7 +79,7 @@ export class OfflineSyncController {
   }
 
   @Get('devices/:deviceId/changes')
-  @Roles(UserRole.DONOR, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
   @ApiOperation({
     summary: 'Read the next page of authorised server changes for this device.',
     description: 'Store all changes locally, then acknowledge exactly nextCursor before requesting the next page.',
@@ -95,7 +95,7 @@ export class OfflineSyncController {
   }
 
   @Post('devices/:deviceId/checkpoint')
-  @Roles(UserRole.DONOR, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
   @ApiOperation({
     summary: 'Acknowledge a fully stored download page and advance its server checkpoint.',
     description: 'Only the exact nextCursor issued for the latest page is accepted.',
@@ -110,7 +110,7 @@ export class OfflineSyncController {
   }
 
   @Get('devices/:deviceId/conflicts')
-  @Roles(UserRole.DONOR, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
   @ApiOperation({
     summary: 'List conflicts retained for this account and device for manual review.',
     description: 'Returns only events and incoming payloads owned by the authenticated account.',

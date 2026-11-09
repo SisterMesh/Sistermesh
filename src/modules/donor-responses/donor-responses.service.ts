@@ -28,7 +28,7 @@ export class DonorResponsesService {
       where: { id: user.id },
       include: { donorProfile: true },
     });
-    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.DONOR || !donor.donorProfile) {
+    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.INDIVIDUAL || !donor.donorProfile) {
       throw new ForbiddenException('An active donor profile is required.');
     }
     const replay = await this.prisma.donorResponse.findUnique({
@@ -58,7 +58,7 @@ export class DonorResponsesService {
         if (
           !currentDonor ||
           currentDonor.status !== 'ACTIVE' ||
-          currentDonor.role !== UserRole.DONOR ||
+          currentDonor.role !== UserRole.INDIVIDUAL ||
           !currentDonor.donorProfile ||
           !currentDonor.donorProfile.isAvailable ||
           !currentDonor.donorProfile.bloodGroup
@@ -131,7 +131,7 @@ export class DonorResponsesService {
       where: { id: user.id },
       select: { id: true, role: true, status: true, donorProfile: { select: { id: true } } },
     });
-    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.DONOR || !donor.donorProfile) {
+    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.INDIVIDUAL || !donor.donorProfile) {
       throw new ForbiddenException('An active donor profile is required.');
     }
     try {
@@ -194,12 +194,32 @@ export class DonorResponsesService {
       where: { id: user.id },
       select: { id: true, role: true, status: true, donorProfile: { select: { id: true } } },
     });
-    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.DONOR || !donor.donorProfile) {
+    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.INDIVIDUAL || !donor.donorProfile) {
       throw new ForbiddenException('An active donor profile is required.');
     }
     return this.prisma.donorResponse.findMany({
       where: { donorUserId: user.id },
-      include: { request: { include: { facility: true } } },
+      select: {
+        id: true,
+        requestId: true,
+        donorProfileId: true,
+        status: true,
+        respondedAt: true,
+        withdrawnAt: true,
+        createdAt: true,
+        request: {
+          select: {
+            id: true,
+            requestedBloodGroup: true,
+            urgency: true,
+            units: true,
+            status: true,
+            expiresAt: true,
+            createdAt: true,
+            facility: { select: { id: true, name: true, locality: true, state: true } },
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

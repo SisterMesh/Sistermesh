@@ -112,7 +112,7 @@ fun RoleScreen(vm: AppViewModel, onBack: () -> Unit, onContinue: (Role) -> Unit)
         Spacer(Modifier.height(8.dp))
         Text("You can change this later by resetting your profile.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(28.dp))
-        RoleCard(Icons.Rounded.Favorite, "I'm a woman donor", "Receive nearby requests and choose when to help.", role == Role.DONOR) { vm.pendingRole = Role.DONOR }
+        RoleCard(Icons.Rounded.Favorite, "I'm an individual", "Request blood for yourself or someone else, and optionally volunteer as a donor.", role == Role.INDIVIDUAL) { vm.pendingRole = Role.INDIVIDUAL }
         Spacer(Modifier.height(14.dp))
         RoleCard(Icons.Rounded.LocalHospital, "I'm a healthcare worker", "Find willing donors for a patient in an emergency.", role == Role.CHW) { vm.pendingRole = Role.CHW }
     }
@@ -143,48 +143,57 @@ fun DonorRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> 
     var group by remember { mutableStateOf("") }
     var area by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
+    var wantsToDonate by remember { mutableStateOf(false) }
     var consent by remember { mutableStateOf(false) }
     var tried by remember { mutableStateOf(false) }
 
     val ageNum = age.toIntOrNull()
     val ageError = when {
+        !wantsToDonate -> null
         age.isBlank() -> "Enter your age"
         ageNum == null || ageNum < 18 -> "You must be 18 or older to register"
         else -> null
     }
-    val valid = name.isNotBlank() && ageError == null && group.isNotBlank() && area.isNotBlank() && consent
+    val valid = name.isNotBlank() &&
+        (!wantsToDonate || (ageError == null && group.isNotBlank() && consent))
 
     Page(footer = {
         SmButton("Register", {
             tried = true
             if (valid) {
-                vm.register(Profile(Role.DONOR, name.trim(), group, area.trim(), phone.trim())) {
+                vm.register(Profile(Role.INDIVIDUAL, name.trim(), if (wantsToDonate) group else "", area.trim(), phone.trim())) {
                     onDone()
                 }
             }
         })
     }) {
-        BackHeader("Donor registration", onBack)
+        BackHeader("Individual registration", onBack)
         Spacer(Modifier.height(8.dp))
-        Text("Tell us a little about you. We only ask what we need.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Text("Create one account to request blood for yourself or someone else. Donor participation is optional.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(24.dp))
         SmField("Name or display name", name, { name = it }, error = if (tried && name.isBlank()) "Enter a name" else null)
         Spacer(Modifier.height(4.dp))
-        SmField("Age", age, { age = it.filter(Char::isDigit).take(2) }, keyboard = KeyboardType.Number, error = if (tried) ageError else null)
-        Spacer(Modifier.height(4.dp))
-        Text("Blood group", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(10.dp))
-        BloodGroupPicker(group, { group = it }, error = tried && group.isBlank())
-        if (tried && group.isBlank()) Text("Select your blood group", style = MaterialTheme.typography.labelMedium, color = Coral, modifier = Modifier.padding(top = 6.dp))
-        Spacer(Modifier.height(20.dp))
-        SmField("Community or area", area, { area = it }, error = if (tried && area.isBlank()) "Enter your area" else null)
+        CheckRow(wantsToDonate, { wantsToDonate = it; consent = false }, "I also want to volunteer as a blood donor.")
+        if (wantsToDonate) {
+            Spacer(Modifier.height(8.dp))
+            SmField("Age", age, { age = it.filter(Char::isDigit).take(2) }, keyboard = KeyboardType.Number, error = if (tried) ageError else null)
+            Spacer(Modifier.height(4.dp))
+            Text("Blood group", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(10.dp))
+            BloodGroupPicker(group, { group = it }, error = tried && group.isBlank())
+            if (tried && group.isBlank()) Text("Select your blood group", style = MaterialTheme.typography.labelMedium, color = Coral, modifier = Modifier.padding(top = 6.dp))
+            Spacer(Modifier.height(12.dp))
+            CheckRow(consent, { consent = it }, "I agree to join the voluntary donor network. I can say no to any request.", error = tried && !consent)
+            if (tried && !consent) Text("Consent is required to join the donor network", style = MaterialTheme.typography.labelMedium, color = Coral)
+        }
+        Spacer(Modifier.height(8.dp))
+        SmField("Community or area (optional)", area, { area = it })
         Spacer(Modifier.height(4.dp))
         SmField("Phone number (optional)", phone, { phone = it.filter { c -> c.isDigit() || c == '+' } }, keyboard = KeyboardType.Phone)
-        Spacer(Modifier.height(12.dp))
-        Notice("Registering does not confirm you are medically eligible. A health professional makes that decision.")
-        Spacer(Modifier.height(8.dp))
-        CheckRow(consent, { consent = it }, "I agree to join the voluntary donor network. I can say no to any request.", error = tried && !consent)
-        if (tried && !consent) Text("Consent is required to register", style = MaterialTheme.typography.labelMedium, color = Coral)
+        if (wantsToDonate) {
+            Spacer(Modifier.height(12.dp))
+            Notice("Registering does not confirm medical eligibility. A health professional makes that decision.")
+        }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -193,12 +202,10 @@ fun DonorRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> 
 @Composable
 fun ChwRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> Unit) {
     var name by remember { mutableStateOf("") }
-    var facility by remember { mutableStateOf("") }
-    var location by remember { mutableStateOf("") }
     var designation by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var tried by remember { mutableStateOf(false) }
-    val valid = name.isNotBlank() && facility.isNotBlank() && location.isNotBlank() && designation.isNotBlank()
+    val valid = name.isNotBlank() && designation.isNotBlank()
     fun err(v: String, m: String) = if (tried && v.isBlank()) m else null
 
     Page(footer = {
@@ -210,8 +217,6 @@ fun ChwRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> Un
                         Role.CHW,
                         name.trim(),
                         phone = phone.trim(),
-                        facility = facility.trim(),
-                        facilityLocation = location.trim(),
                         designation = designation.trim()
                     )
                 ) {
@@ -222,13 +227,9 @@ fun ChwRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> Un
     }) {
         BackHeader("Healthcare worker", onBack)
         Spacer(Modifier.height(8.dp))
-        Text("Your facility details pre-fill every request you send.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Text("Your account must be verified and assigned to an approved facility before it can manage requests.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(24.dp))
         SmField("Full name", name, { name = it }, error = err(name, "Enter your name"))
-        Spacer(Modifier.height(4.dp))
-        SmField("Facility name", facility, { facility = it }, error = err(facility, "Enter the facility name"))
-        Spacer(Modifier.height(4.dp))
-        SmField("Facility location", location, { location = it }, error = err(location, "Enter the facility location"))
         Spacer(Modifier.height(4.dp))
         SmField("Role or designation", designation, { designation = it }, error = err(designation, "Enter your role"))
         Spacer(Modifier.height(4.dp))

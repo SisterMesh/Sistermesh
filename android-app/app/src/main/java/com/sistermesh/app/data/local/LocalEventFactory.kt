@@ -16,6 +16,11 @@ internal object LocalEventFactory {
         bloodGroup: String,
         urgency: String,
         units: Int,
+        facilityId: String? = null,
+        isForSelf: Boolean = true,
+        beneficiaryName: String? = null,
+        beneficiaryRelationship: String? = null,
+        additionalInfo: String? = null,
         originDeviceId: String,
         localCreatedAt: String,
         ownerAccountId: String? = null
@@ -30,6 +35,11 @@ internal object LocalEventFactory {
             .put("requestedBloodGroup", apiBloodGroup(bloodGroup))
             .put("urgency", urgency)
             .put("units", units)
+            .put("facilityId", facilityId)
+            .put("isForSelf", isForSelf)
+            .put("beneficiaryName", beneficiaryName)
+            .put("beneficiaryRelationship", beneficiaryRelationship)
+            .put("additionalInfo", additionalInfo)
             .toString()
     )
 

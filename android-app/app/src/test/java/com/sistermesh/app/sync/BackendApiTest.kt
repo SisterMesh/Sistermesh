@@ -36,7 +36,7 @@ class BackendApiTest {
         server.enqueue(
             MockResponse()
                 .addHeader("Set-Cookie", "sistermesh_refresh=refresh%2Bvalue; Path=/api/auth; HttpOnly; Secure; SameSite=Strict")
-                .setBody(sessionJson("DONOR"))
+                .setBody(sessionJson("INDIVIDUAL"))
         )
 
         val session = api.login("+2348012345678", "not-a-real-password")
@@ -46,7 +46,7 @@ class BackendApiTest {
         assertEquals("+2348012345678", JSONObject(request.body.readUtf8()).getString("phoneNumber"))
         assertEquals("refresh+value", session.refreshCookie)
         assertEquals("access-test", session.accessToken)
-        assertEquals("DONOR", session.user.role)
+        assertEquals("INDIVIDUAL", session.user.role)
     }
 
     @Test

@@ -126,7 +126,7 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
 
         Spacer(Modifier.height(28.dp))
     }
-    if (voice) VoiceSheet(Role.DONOR) { voice = false }
+    if (voice) VoiceSheet(Role.INDIVIDUAL) { voice = false }
 }
 
 @Composable

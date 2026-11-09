@@ -62,14 +62,12 @@ class SyncEngine(
             if (user.status != "ACTIVE") {
                 return finish(SyncOutcome.NEEDS_SIGN_IN, "This account is not active.")
             }
-            if (user.role == "DONOR" && user.donorBloodGroup.isNullOrBlank()) {
-                return finish(SyncOutcome.PROFILE_INCOMPLETE, "Complete the blood group on the donor account before syncing.")
-            }
             if (user.role == "HEALTH_WORKER" &&
                 (user.healthWorkerVerificationStatus != "VERIFIED" || user.healthWorkerFacilityId.isNullOrBlank())
             ) {
                 return finish(SyncOutcome.VERIFICATION_PENDING, "Health-worker verification and facility assignment are required before syncing.")
             }
+            if (user.role == "INDIVIDUAL") syncDonorProfile(profile, user)
 
             val clientDeviceId = device.clientDeviceId.toString()
             val registered = apiCall { api.registerDevice(it, clientDeviceId, device.name) }
@@ -94,6 +92,9 @@ class SyncEngine(
                 return finish(outgoing, "An outgoing item could not be processed.")
             }
             downloadChanges(registered.deviceId, user)
+            if (user.donorProfileId != null || profile.bloodGroup.isNotBlank()) {
+                refreshDonationActivity()
+            }
             refreshConflicts(registered.deviceId)
             val completedAt = LocalEventFactory.now()
             database.deviceInfoDao().upsert(
@@ -149,6 +150,13 @@ class SyncEngine(
     }
 
     suspend fun pendingCount(): Int = database.syncEventDao().pendingCountNow()
+
+    suspend fun refreshFacilities() {
+        val facilities = api.listFacilities()
+        database.facilityDao().upsertAll(
+            facilities.map { com.sistermesh.app.data.local.FacilityEntity(it.id, it.name, it.locality, it.state) }
+        )
+    }
 
     private suspend fun uploadPending(clientDeviceId: String, accountId: String, serverDeviceId: String): SyncOutcome {
         database.syncEventDao().unblockForAccount(accountId, clientDeviceId)
@@ -445,10 +453,18 @@ class SyncEngine(
                 .joinToString(", ")
                 .ifBlank { "Health facility" }
             val current = existing
+            val canSeePrivateDetails = serverRequest.isMine || user.role == "HEALTH_WORKER"
+            val publishedToDonors = status == RequestStatus.OPEN || status == RequestStatus.PARTIALLY_FILLED
+            val requestKind = when {
+                user.role == "HEALTH_WORKER" -> "FACILITY"
+                serverRequest.isMine -> "OUTGOING"
+                publishedToDonors -> "INCOMING"
+                else -> "HIDDEN"
+            }
             val updated = (current ?: EmergencyRequestEntity(
                 localId = localId,
                 serverId = requestId,
-                kind = if (user.role == "HEALTH_WORKER") "INCOMING" else "INCOMING",
+                kind = requestKind,
                 bloodGroup = bloodGroup,
                 urgency = urgency,
                 units = serverRequest.units,
@@ -461,10 +477,18 @@ class SyncEngine(
                 syncStatus = "SYNCED"
             )).copy(
                 serverId = requestId,
+                kind = requestKind,
                 bloodGroup = if (preserveLocalEdits) current?.bloodGroup ?: bloodGroup else bloodGroup,
                 urgency = if (preserveLocalEdits) current?.urgency ?: urgency else urgency,
                 units = if (preserveLocalEdits) current?.units ?: serverRequest.units else serverRequest.units,
                 facility = facility,
+                facilityId = serverRequest.facilityId.ifBlank { current?.facilityId.orEmpty() }.takeIf { it.isNotBlank() },
+                isForSelf = if (canSeePrivateDetails) serverRequest.isForSelf ?: current?.isForSelf ?: true else true,
+                beneficiaryName = if (canSeePrivateDetails) serverRequest.beneficiaryName else null,
+                beneficiaryRelationship = if (canSeePrivateDetails) serverRequest.beneficiaryRelationship else null,
+                additionalInfo = if (canSeePrivateDetails) serverRequest.additionalInfo else null,
+                note = if (canSeePrivateDetails) serverRequest.additionalInfo.orEmpty() else "",
+                reviewReason = if (canSeePrivateDetails) serverRequest.reviewReason else null,
                 createdAt = current?.createdAt ?: serverRequest.createdAt,
                 updatedAt = if (preserveLocalEdits) current?.updatedAt ?: serverRequest.updatedAt else serverRequest.updatedAt,
                 status = if (preserveLocalEdits) current?.status ?: status else status,
@@ -474,6 +498,9 @@ class SyncEngine(
                 syncStatus = if (preserveLocalEdits) current?.syncStatus ?: "PENDING" else "SYNCED"
             )
             requests.upsert(updated)
+            if (requestKind == "OUTGOING" && publishedToDonors) {
+                database.syncEventDao().setRequestPublicationStatus(localId, status)
+            }
         }
         val activityId = "SERVER-CURSOR-${change.cursor}"
         database.requestActivityDao().insertIfAbsent(
@@ -602,13 +629,112 @@ class SyncEngine(
         return BigInteger(value)
     }
 
+    private suspend fun syncDonorProfile(
+        profile: com.sistermesh.app.data.local.ProfileEntity,
+        user: BackendUser
+    ) {
+        val bloodGroup = profile.bloodGroup.takeIf(String::isNotBlank)
+        if (bloodGroup != null && user.donorBloodGroup.isNullOrBlank()) {
+            auth.createDonorProfile(bloodGroup.toApiBloodGroup(), profile.area)
+        } else if (bloodGroup != null && !user.donorBloodGroup.isNullOrBlank()) {
+            auth.updateDonorProfile(
+                bloodGroup = bloodGroup.toApiBloodGroup(),
+                locality = profile.area,
+                isAvailable = profile.isAvailable
+            )
+        }
+    }
+
+    private suspend fun refreshDonationActivity() {
+        val serverResponses = auth.getMyDonations()
+        val requestDao = database.emergencyRequestDao()
+        val responseDao = database.donorResponseDao()
+        serverResponses.sortedBy { it.createdAt }.forEach { response ->
+            val snapshot = response.request
+            val existing = requestDao.getByServerId(response.requestId)
+            val localId = existing?.localId ?: "SYNC-${response.requestId}"
+            val group = mapBloodGroup(snapshot.requestedBloodGroup)
+            val urgency = snapshot.urgency.takeIf { it == "CRITICAL" || it == "URGENT" }
+                ?: throw BackendProtocolException("The server returned an unsupported urgency.")
+            val facility = listOf(snapshot.facilityName, snapshot.facilityLocality, snapshot.facilityState)
+                .filter(String::isNotBlank).distinct().joinToString(", ").ifBlank { "Health facility" }
+            val decision = when (response.status) {
+                "ACCEPTED", "CONFIRMED" -> "ACCEPTED"
+                "DECLINED" -> "DECLINED"
+                "WITHDRAWN" -> "WITHDRAWN"
+                else -> "NONE"
+            }
+            val status = mapRequestStatus(snapshot.status)
+            val entity = (existing ?: EmergencyRequestEntity(
+                localId = localId,
+                kind = "INCOMING",
+                bloodGroup = group,
+                urgency = urgency,
+                units = snapshot.units,
+                facility = facility,
+                createdAt = snapshot.createdAt,
+                status = status,
+                receivedAt = displayTime(response.respondedAt ?: response.createdAt),
+                syncStatus = "SYNCED"
+            )).copy(
+                serverId = response.requestId,
+                kind = if (existing?.kind == "OUTGOING") "OUTGOING" else "INCOMING",
+                bloodGroup = group,
+                urgency = urgency,
+                units = snapshot.units,
+                facility = facility,
+                facilityId = snapshot.facilityId.takeIf(String::isNotBlank),
+                updatedAt = snapshot.updatedAt,
+                status = status,
+                decision = decision,
+                confirmed = response.status == "CONFIRMED",
+                receivedAt = existing?.receivedAt?.takeIf(String::isNotBlank)
+                    ?: displayTime(response.respondedAt ?: response.createdAt),
+                syncStatus = "SYNCED"
+            )
+            requestDao.upsert(entity)
+            responseDao.upsert(
+                com.sistermesh.app.data.local.DonorResponseEntity(
+                    id = "SERVER-${response.id}",
+                    requestLocalId = localId,
+                    serverResponseId = response.id,
+                    donorProfileId = response.donorProfileId,
+                    ref = "You",
+                    area = "",
+                    distance = "",
+                    status = when (response.status) {
+                        "ACCEPTED" -> "ACCEPTED"
+                        "DECLINED" -> "DECLINED"
+                        "WITHDRAWN" -> "WITHDRAWN"
+                        "CONFIRMED" -> "CONFIRMED"
+                        else -> "ACCEPTED"
+                    },
+                    createdAt = response.respondedAt ?: response.createdAt,
+                    syncStatus = "SYNCED"
+                )
+            )
+        }
+    }
+
+    private fun String.toApiBloodGroup(): String = when (uppercase()) {
+        "A+" -> "A_POSITIVE"
+        "A-" -> "A_NEGATIVE"
+        "B+" -> "B_POSITIVE"
+        "B-" -> "B_NEGATIVE"
+        "AB+" -> "AB_POSITIVE"
+        "AB-" -> "AB_NEGATIVE"
+        "O+" -> "O_POSITIVE"
+        "O-" -> "O_NEGATIVE"
+        else -> throw IllegalArgumentException("Choose a valid blood group before syncing donor settings.")
+    }
+
     private fun mapRequestStatus(status: String): String = when (status) {
-        "OPEN", "SEARCHING" -> "SEARCHING"
-        "PARTIALLY_FILLED", "WAITING" -> "WAITING"
-        "ACCEPTED" -> "ACCEPTED"
-        "FULFILLED", "COMPLETED" -> "COMPLETED"
-        "CANCELLED" -> "CANCELLED"
-        "EXPIRED" -> "EXPIRED"
+        "OPEN", "PARTIALLY_FILLED", "FULFILLED", "CANCELLED", "EXPIRED",
+        "PENDING_FACILITY_VERIFICATION", "NEEDS_INFORMATION", "REJECTED" -> status
+        "SEARCHING" -> "SEARCHING"
+        "WAITING" -> "WAITING"
+        "ACCEPTED", "LEGACY_ACCEPTED" -> "ACCEPTED"
+        "COMPLETED", "LEGACY_COMPLETED" -> "COMPLETED"
         else -> throw BackendProtocolException("The server returned an unsupported request status.")
     }
 
@@ -642,7 +768,7 @@ class SyncEngine(
         UUID.nameUUIDFromBytes("SisterMeshConflict/v1:$source:$eventId:$code:$detail".toByteArray(StandardCharsets.UTF_8)).toString()
 
     private fun String.toBackendRole(): String = when (this) {
-        "DONOR" -> "DONOR"
+        "INDIVIDUAL" -> "INDIVIDUAL"
         "CHW" -> "HEALTH_WORKER"
         else -> throw IllegalArgumentException("Unsupported local profile role.")
     }

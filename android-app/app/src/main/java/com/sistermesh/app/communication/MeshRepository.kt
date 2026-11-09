@@ -1,5 +1,6 @@
 package com.sistermesh.app.communication
 
+import com.sistermesh.app.data.local.LocalEventFactory
 import androidx.room.withTransaction
 import com.sistermesh.app.data.Decision
 import com.sistermesh.app.data.RequestStatus
@@ -81,9 +82,21 @@ class MeshRepository(
         if (event.localEntityId.isNullOrBlank()) return
 
         val request = database.emergencyRequestDao().get(event.localEntityId)
+        if (
+            event.eventType == "request.create" &&
+            request?.status !in setOf(RequestStatus.OPEN.name, RequestStatus.PARTIALLY_FILLED.name)
+        ) return
         val route = routes.byLocalRequest(event.localEntityId)
         val now = Instant.now()
         val expiry = messageExpiry(event.payloadJson, now)
+        val meshPayload = if (event.eventType == "request.create" && request != null) {
+            JSONObject()
+                .put("requestedBloodGroup", LocalEventFactory.apiBloodGroup(request.bloodGroup))
+                .put("urgency", request.urgency)
+                .put("units", request.units)
+                .put("publicationStatus", request.status)
+                .toString()
+        } else event.payloadJson
         val isDonorAction = event.eventType in setOf(
             "donor-response.accept", "donor-response.decline", "donor.withdraw"
         )
@@ -98,7 +111,7 @@ class MeshRepository(
             originIdentitySignature = identity.identitySignature,
             originSignature = "",
             payloadSchemaVersion = event.payloadSchemaVersion,
-            payloadJson = event.payloadJson,
+            payloadJson = meshPayload,
             displayFacility = request?.facility?.takeIf { event.eventType == "request.create" }?.take(120),
             displayDonorRef = if (isDonorAction) pseudonym(localId) else null,
             relatedRequestOriginId = if (isDonorAction) route?.originRequestLocalId else null,
@@ -134,6 +147,7 @@ class MeshRepository(
     suspend fun prepareEventForPeer(messageId: String, peerDeviceId: String): ByteArray? {
         val localId = localDeviceId()
         val row = messages.get(messageId) ?: return null
+        if (row.eventType == "request.create" && !isApprovedMeshRequest(row, localId)) return null
         val now = Instant.now()
         val relayDecision = RelayPolicy.decide(row.toPacket(), localId, peerDeviceId, seen = false, now = now)
         if (relayDecision == RelayPolicy.Decision.Expired) {
@@ -163,6 +177,21 @@ class MeshRepository(
             relayAttestationSignature = signer.sign(MeshCanonical.relayAttestation(packet))
         )
         return MeshCodec.encodeEvent(signedPacket)
+    }
+
+    private suspend fun isApprovedMeshRequest(row: MeshMessageEntity, localId: String): Boolean {
+        val packet = row.toPacket()
+        if (JSONObject(packet.payloadJson).optString("publicationStatus") !in
+            setOf(RequestStatus.OPEN.name, RequestStatus.PARTIALLY_FILLED.name)
+        ) return false
+        val originRequestId = row.localEntityId ?: return false
+        val localRequestId = if (row.originDeviceId == localId) {
+            originRequestId
+        } else {
+            routes.byOriginRequest(row.originDeviceId, originRequestId)?.requestLocalId ?: return false
+        }
+        val request = database.emergencyRequestDao().get(localRequestId) ?: return false
+        return request.status in setOf(RequestStatus.OPEN.name, RequestStatus.PARTIALLY_FILLED.name)
     }
 
     suspend fun recordEventTransmitted(messageId: String, peerDeviceId: String) {
@@ -495,7 +524,11 @@ class MeshRepository(
                         facility = packet.displayFacility ?: "Nearby health facility",
                         createdAt = packet.originCreatedAt,
                         updatedAt = packet.originCreatedAt,
-                        status = RequestStatus.SEARCHING.name,
+                        status = if (payload.optString("publicationStatus") in setOf(
+                                RequestStatus.OPEN.name,
+                                RequestStatus.PARTIALLY_FILLED.name
+                            )
+                        ) payload.optString("publicationStatus") else RequestStatus.PENDING_FACILITY_VERIFICATION.name,
                         receivedAt = "Just now",
                         expiresIn = "Expires in 30 min",
                         decision = Decision.NONE.name,

@@ -70,7 +70,7 @@ describe('Offline synchronization database integration', () => {
 
     const donorRow = await prisma.user.create({
       data: {
-        role: UserRole.DONOR,
+        role: UserRole.INDIVIDUAL,
         displayName: 'Sync Integration Donor',
         phoneNumber: `+${randomUUID().replaceAll('-', '').slice(0, 14)}`,
         donorProfile: {
@@ -83,7 +83,7 @@ describe('Offline synchronization database integration', () => {
       },
     });
     userIds.push(donorRow.id);
-    donor = { id: donorRow.id, role: UserRole.DONOR, status: 'ACTIVE' };
+    donor = { id: donorRow.id, role: UserRole.INDIVIDUAL, status: 'ACTIVE' };
     donorProfileId = (
       await prisma.donorProfile.findUniqueOrThrow({ where: { userId: donorRow.id } })
     ).id;

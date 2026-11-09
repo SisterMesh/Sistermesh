@@ -33,10 +33,10 @@ fun AppNav(vm: AppViewModel) {
         composable("welcome") { WelcomeScreen { nav.navigate("role") } }
         composable("role") {
             RoleScreen(vm, onBack = { nav.popBackStack() }) { role ->
-                nav.navigate(if (role == Role.DONOR) "register_donor" else "register_chw")
+                nav.navigate(if (role == Role.INDIVIDUAL) "register_individual" else "register_chw")
             }
         }
-        composable("register_donor") { DonorRegistrationScreen(vm, { nav.popBackStack() }) { nav.navigate("permissions") } }
+        composable("register_individual") { DonorRegistrationScreen(vm, { nav.popBackStack() }) { nav.navigate("permissions") } }
         composable("register_chw") { ChwRegistrationScreen(vm, { nav.popBackStack() }) { nav.navigate("permissions") } }
         composable("permissions") {
             PermissionsScreen { nav.navigate("home") { popUpTo(nav.graph.id) { inclusive = true } } }
@@ -44,9 +44,15 @@ fun AppNav(vm: AppViewModel) {
 
         // Tabs
         composable("home") {
-            if (vm.profile?.role == Role.CHW) ChwHomeScreen(vm, nav) else DonorHomeScreen(vm, nav)
+            UnifiedHomeScreen(vm, nav)
         }
-        composable("history") { HistoryScreen(vm, nav) }
+        composable("find_blood") { FindBloodScreen(vm, nav) }
+        composable("donate") { DonateScreen(vm, nav) }
+        composable("activity") { ActivityScreen(vm, nav) }
+        composable("facility_requests") { FacilityReviewScreen(vm, nav) }
+        composable("review_request/{id}") { RequestReviewScreen(vm, nav, it.arg("id")) }
+        composable("edit_request/{id}") { EditRequestSubmissionScreen(vm, nav, it.arg("id")) }
+        composable("history") { ActivityScreen(vm, nav) }
         composable("profile") { ProfileScreen(vm, nav) }
         composable("sync_account") { SyncAccountScreen(vm, nav) }
         composable("sync_review") { SyncReviewScreen(vm, nav) }
@@ -55,7 +61,7 @@ fun AppNav(vm: AppViewModel) {
         composable("incoming/{id}") { IncomingRequestScreen(vm, nav, it.arg("id")) }
 
         // CHW flow
-        composable("create_request") { CreateRequestScreen(vm, nav) }
+        composable("create_request") { UnifiedCreateRequestScreen(vm, nav) }
         composable("broadcast/{id}") { BroadcastScreen(vm, nav, it.arg("id")) }
         composable("tracking/{id}") { TrackingScreen(vm, nav, it.arg("id")) }
         composable("confirm/{id}/{ref}") { DonationConfirmationScreen(vm, nav, it.arg("id"), it.arg("ref")) }

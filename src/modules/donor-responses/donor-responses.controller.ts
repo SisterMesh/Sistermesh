@@ -16,7 +16,7 @@ export class DonorResponsesController {
   constructor(private readonly service: DonorResponsesService) {}
 
   @Post(':requestId')
-  @Roles(UserRole.DONOR)
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({ summary: 'Accept or decline a request once; retry with the same idempotency key.' })
   @ApiResponse({ status: 409, description: 'The request is closed or this donor already responded.' })
   respond(
@@ -28,14 +28,14 @@ export class DonorResponsesController {
   }
 
   @Get('mine')
-  @Roles(UserRole.DONOR)
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({ summary: 'List the signed-in donor’s responses.' })
   listMine(@CurrentUser() user: AuthenticatedUser) {
     return this.service.listMine(user);
   }
 
   @Post(':requestId/withdraw')
-  @Roles(UserRole.DONOR)
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({
     summary: 'Withdraw the signed-in donor’s accepted response while the request remains open.',
     description: 'Retry safely using the same withdrawal idempotency key.',

@@ -5,7 +5,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class Role { DONOR, CHW }
+enum class Role { INDIVIDUAL, CHW }
 
 enum class Urgency(val label: String) { CRITICAL("Critical"), URGENT("Urgent") }
 
@@ -16,14 +16,36 @@ enum class ResponseStatus(val label: String) {
 }
 
 enum class RequestStatus(val label: String) {
+    PENDING_FACILITY_VERIFICATION("Waiting for facility review"),
+    NEEDS_INFORMATION("More information needed"),
+    REJECTED("Not approved"),
+    OPEN("Open to donors"),
+    PARTIALLY_FILLED("Partially filled"),
+    FULFILLED("Fulfilled"),
     SEARCHING("Searching"), WAITING("Waiting for response"), ACCEPTED("Donor accepted"),
     COMPLETED("Completed"), CANCELLED("Cancelled"), EXPIRED("Expired");
 
-    val isActive get() = this == SEARCHING || this == WAITING || this == ACCEPTED
+    val isActive get() = this in setOf(
+        PENDING_FACILITY_VERIFICATION,
+        NEEDS_INFORMATION,
+        OPEN,
+        PARTIALLY_FILLED,
+        SEARCHING,
+        WAITING,
+        ACCEPTED
+    )
 }
 
 enum class Decision { NONE, ACCEPTED, DECLINED, WITHDRAWN }
 
+data class Facility(
+    val id: String,
+    val name: String,
+    val locality: String,
+    val state: String
+) {
+    val label: String get() = listOf(name, locality, state).filter(String::isNotBlank).joinToString(", ")
+}
 val BloodGroups = listOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
 val Languages = listOf("English", "Hausa", "Yoruba", "Igbo", "Pidgin")
 
@@ -35,7 +57,8 @@ data class Profile(
     val phone: String = "",
     val facility: String = "",
     val facilityLocation: String = "",
-    val designation: String = ""
+    val designation: String = "",
+    val facilityId: String? = null
 ) {
     /** Pseudonymous reference shown instead of a real identity. */
     val donorRef: String get() = name.hashCode().toUInt().toString(16).padStart(4, '0').take(4).uppercase()
@@ -52,6 +75,13 @@ data class BloodRequest(
     val facility: String,
     val createdAt: String,
     val status: RequestStatus,
+    val serverUpdatedAt: String? = null,
+    val facilityId: String? = null,
+    val isForSelf: Boolean = true,
+    val beneficiaryName: String? = null,
+    val beneficiaryRelationship: String? = null,
+    val additionalInfo: String? = null,
+    val reviewReason: String? = null,
     val devicesFound: Int = 0,
     val delivered: Int = 0,
     val responses: List<DonorResponse> = emptyList()
@@ -70,7 +100,8 @@ data class IncomingRequest(
     val expiresIn: String,
     val units: Int,
     val decision: Decision = Decision.NONE,
-    val confirmed: Boolean = false
+    val confirmed: Boolean = false,
+    val status: RequestStatus = RequestStatus.OPEN
 )
 
 data class Receipt(

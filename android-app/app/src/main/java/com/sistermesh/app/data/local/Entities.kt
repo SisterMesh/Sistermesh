@@ -15,6 +15,7 @@ data class ProfileEntity(
     val area: String,
     val phone: String,
     val facility: String,
+    val facilityId: String? = null,
     val facilityLocation: String,
     val designation: String,
     val isAvailable: Boolean = true,
@@ -34,6 +35,12 @@ data class EmergencyRequestEntity(
     val units: Int,
     val note: String = "",
     val facility: String = "",
+    val facilityId: String? = null,
+    val isForSelf: Boolean = true,
+    val beneficiaryName: String? = null,
+    val beneficiaryRelationship: String? = null,
+    val additionalInfo: String? = null,
+    val reviewReason: String? = null,
     val createdAt: String,
     val updatedAt: String? = null,
     val status: String,
@@ -47,6 +54,17 @@ data class EmergencyRequestEntity(
     val isDemo: Boolean = false,
     val syncStatus: String = "LOCAL",
     val lastServerCursor: String? = null
+)
+
+@Entity(
+    tableName = "facilities",
+    indices = [Index(value = ["state", "locality"]), Index(value = ["name"])]
+)
+data class FacilityEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val locality: String,
+    val state: String
 )
 
 @Entity(

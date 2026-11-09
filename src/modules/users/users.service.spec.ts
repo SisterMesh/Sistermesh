@@ -25,7 +25,7 @@ describe('UsersService administrator controls', () => {
     const service = new UsersService(prisma as never);
 
     await expect(
-      service.setRole('other-admin', 'admin-id', UserRole.DONOR),
+      service.setRole('other-admin', 'admin-id', UserRole.INDIVIDUAL),
     ).rejects.toMatchObject({ status: 409 });
     expect(tx.user.update).not.toHaveBeenCalled();
   });
@@ -35,7 +35,7 @@ describe('UsersService administrator controls', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'user-id',
-          role: UserRole.DONOR,
+          role: UserRole.INDIVIDUAL,
           status: AccountStatus.ACTIVE,
         }),
         update: jest.fn().mockResolvedValue({ id: 'user-id' }),

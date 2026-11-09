@@ -193,15 +193,20 @@ fun Tag(text: String, tone: Tone = Tone.Neutral, icon: ImageVector? = null, modi
 }
 
 fun RequestStatus.tone() = when (this) {
-    RequestStatus.SEARCHING, RequestStatus.WAITING -> Tone.Warn
-    RequestStatus.ACCEPTED, RequestStatus.COMPLETED -> Tone.Good
+    RequestStatus.SEARCHING, RequestStatus.WAITING,
+    RequestStatus.PENDING_FACILITY_VERIFICATION, RequestStatus.NEEDS_INFORMATION -> Tone.Warn
+    RequestStatus.OPEN, RequestStatus.PARTIALLY_FILLED,
+    RequestStatus.ACCEPTED, RequestStatus.COMPLETED, RequestStatus.FULFILLED -> Tone.Good
+    RequestStatus.REJECTED -> Tone.Danger
     RequestStatus.CANCELLED, RequestStatus.EXPIRED -> Tone.Neutral
 }
 
 fun RequestStatus.icon() = when (this) {
-    RequestStatus.SEARCHING, RequestStatus.WAITING -> Icons.Rounded.Schedule
-    RequestStatus.ACCEPTED, RequestStatus.COMPLETED -> Icons.Rounded.Check
-    RequestStatus.CANCELLED, RequestStatus.EXPIRED -> Icons.Rounded.Close
+    RequestStatus.SEARCHING, RequestStatus.WAITING,
+    RequestStatus.PENDING_FACILITY_VERIFICATION, RequestStatus.NEEDS_INFORMATION -> Icons.Rounded.Schedule
+    RequestStatus.OPEN, RequestStatus.PARTIALLY_FILLED -> Icons.Rounded.Favorite
+    RequestStatus.ACCEPTED, RequestStatus.COMPLETED, RequestStatus.FULFILLED -> Icons.Rounded.Check
+    RequestStatus.REJECTED, RequestStatus.CANCELLED, RequestStatus.EXPIRED -> Icons.Rounded.Close
 }
 
 @Composable
@@ -450,12 +455,14 @@ fun Pulse(modifier: Modifier = Modifier, color: Color = Teal, content: @Composab
 fun TabBar(current: String, nav: NavController) {
     val items = listOf(
         Triple("home", "Home", Icons.Rounded.Home),
-        Triple("history", "History", Icons.Rounded.History),
+        Triple("find_blood", "Find blood", Icons.Rounded.Search),
+        Triple("donate", "Donate", Icons.Rounded.Favorite),
+        Triple("activity", "My activity", Icons.Rounded.History),
         Triple("profile", "Profile", Icons.Rounded.Person)
     )
     Surface(color = Paper, border = BorderStroke(1.dp, Line)) {
         Row(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             items.forEach { (route, label, icon) ->
@@ -463,13 +470,13 @@ fun TabBar(current: String, nav: NavController) {
                 Column(
                     Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
                         .clickable { if (!on) nav.navigate(route) { popUpTo("home"); launchSingleTop = true } }
-                        .padding(vertical = 6.dp),
+                        .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Box(
-                        Modifier.clip(RoundedCornerShape(50)).background(if (on) Mint else Color.Transparent).padding(horizontal = 18.dp, vertical = 5.dp)
-                    ) { Icon(icon, label, Modifier.size(22.dp), tint = if (on) Teal else Muted) }
-                    Text(label, style = MaterialTheme.typography.labelSmall, color = if (on) Teal else Muted)
+                        Modifier.clip(RoundedCornerShape(50)).background(if (on) Mint else Color.Transparent).padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) { Icon(icon, label, Modifier.size(20.dp), tint = if (on) Teal else Muted) }
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = if (on) Teal else Muted, maxLines = 1)
                 }
             }
         }

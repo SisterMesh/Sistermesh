@@ -63,7 +63,7 @@ describe('Emergency coordination database integration', () => {
     for (let index = 0; index < 3; index += 1) {
       const donorRow = await prisma.user.create({
         data: {
-          role: UserRole.DONOR,
+          role: UserRole.INDIVIDUAL,
           displayName: `Integration Donor ${index + 1}`,
           phoneNumber: `+${randomUUID().replaceAll('-', '').slice(0, 14)}`,
           donorProfile: {
@@ -79,7 +79,7 @@ describe('Emergency coordination database integration', () => {
       createdUserIds.push(donorRow.id);
       if (!donorRow.donorProfile) throw new Error('Integration donor profile was not created.');
       donors.push({
-        user: { id: donorRow.id, role: UserRole.DONOR, status: 'ACTIVE' },
+        user: { id: donorRow.id, role: UserRole.INDIVIDUAL, status: 'ACTIVE' },
         profileId: donorRow.donorProfile.id,
       });
     }

@@ -240,12 +240,12 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
             Column {
                 Text(p.name, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(4.dp))
-                Tag(if (p.role == Role.DONOR) "Woman donor" else "Healthcare worker", Tone.Good, if (p.role == Role.DONOR) Icons.Rounded.Favorite else Icons.Rounded.LocalHospital)
+                Tag(if (p.role == Role.INDIVIDUAL) "Individual" else "Healthcare worker", Tone.Good, if (p.role == Role.INDIVIDUAL) Icons.Rounded.Person else Icons.Rounded.LocalHospital)
             }
         }
         Spacer(Modifier.height(22.dp))
         SmCard {
-            if (p.role == Role.DONOR) {
+            if (p.role == Role.INDIVIDUAL) {
                 InfoRow("Blood group", p.bloodGroup)
                 HairLine()
                 InfoRow("Area", p.area)
@@ -277,7 +277,7 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
 
         SectionTitle("Privacy")
         Notice(
-            if (p.role == Role.DONOR) "Your exact location and phone number are never shared. You can decline any request, any time."
+            if (p.role == Role.INDIVIDUAL) "Your contact details are not shared with donors. You can choose whether to join the donor network."
             else "Broadcasts never include patient names or identifiable medical information.",
             Icons.Rounded.Lock, Tone.Good
         )

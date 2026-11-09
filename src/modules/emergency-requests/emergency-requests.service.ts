@@ -19,7 +19,9 @@ import { AuthenticatedUser } from '../../common/authenticated-user';
 import { DONOR_GROUPS_FOR_RECIPIENT } from '../donors/blood-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmergencyRequestDto } from './dto/create-emergency-request.dto';
+import { ReviewEmergencyRequestDto } from './dto/review-emergency-request.dto';
 import { UpdateEmergencyRequestDto } from './dto/update-emergency-request.dto';
+import { UpdateRequestSubmissionDto } from './dto/update-request-submission.dto';
 import { createSyncActivity } from '../offline-sync/sync-cursor';
 
 @Injectable()
@@ -43,26 +45,36 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async create(user: AuthenticatedUser, dto: CreateEmergencyRequestDto) {
-    const worker = await this.prisma.user.findUnique({
+    const actor = await this.prisma.user.findUnique({
       where: { id: user.id },
-      include: {
-        healthWorkerProfile: {
-          include: { facility: { select: { status: true } } },
-        },
-      },
+      select: { id: true, role: true, status: true },
     });
-    if (!worker || worker.status !== 'ACTIVE' || worker.role !== UserRole.HEALTH_WORKER) {
-      throw new ForbiddenException('An active health worker account is required.');
+    if (!actor || actor.status !== 'ACTIVE' ||
+      (actor.role !== UserRole.INDIVIDUAL && actor.role !== UserRole.HEALTH_WORKER)) {
+      throw new ForbiddenException('An active individual or health-worker account is required.');
     }
-    if (worker.healthWorkerProfile?.verificationStatus !== 'VERIFIED') {
-      throw new ForbiddenException('Your health worker profile has not been verified.');
-    }
-    const facilityId = worker.healthWorkerProfile?.facilityId;
+    const facilityId = actor.role === UserRole.HEALTH_WORKER
+      ? await this.getWorkerFacility(user)
+      : dto.facilityId;
     if (!facilityId) {
-      throw new ForbiddenException('Your account is not assigned to a facility.');
+      throw new BadRequestException('Choose an active health facility for this request.');
     }
-    if (worker.healthWorkerProfile.facility?.status !== 'ACTIVE') {
-      throw new ForbiddenException('Your assigned facility is not active.');
+    const facility = await this.prisma.facility.findFirst({
+      where: { id: facilityId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (!facility) {
+      throw new BadRequestException('Choose an active health facility.');
+    }
+    const isForSelf = dto.isForSelf ?? actor.role === UserRole.INDIVIDUAL;
+    const beneficiaryName = dto.beneficiaryName?.trim() || null;
+    const beneficiaryRelationship = dto.beneficiaryRelationship?.trim() || null;
+    const additionalInfo = dto.additionalInfo?.trim() || null;
+    if (isForSelf && (beneficiaryName || beneficiaryRelationship)) {
+      throw new BadRequestException('Beneficiary details must be omitted for a request for yourself.');
+    }
+    if (!isForSelf && !beneficiaryName && actor.role === UserRole.INDIVIDUAL) {
+      throw new BadRequestException('Enter the patient or beneficiary name for a request on someone else’s behalf.');
     }
 
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
@@ -70,7 +82,10 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       where: { clientRequestId: dto.clientRequestId },
       include: { facility: true },
     });
-    if (existing) return this.assertSameCreate(existing, user.id, facilityId, dto, expiresAt);
+    if (existing) {
+      return this.assertSameCreate(existing, user.id, facilityId, dto, expiresAt, isForSelf,
+        beneficiaryName, beneficiaryRelationship, additionalInfo);
+    }
     if (expiresAt && expiresAt <= new Date()) {
       throw new BadRequestException('Request expiry must be in the future.');
     }
@@ -82,10 +97,15 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
             clientRequestId: dto.clientRequestId,
             createdByUserId: user.id,
             facilityId,
+            isForSelf,
+            beneficiaryName,
+            beneficiaryRelationship,
+            additionalInfo,
             requestedBloodGroup: dto.requestedBloodGroup,
             urgency: dto.urgency,
             units: dto.units,
             expiresAt,
+            status: EmergencyRequestStatus.PENDING_FACILITY_VERIFICATION,
           },
           include: { facility: true },
         });
@@ -94,7 +114,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
             actorUserId: user.id,
             eventType: RequestActivityType.CREATED,
             toStatus: request.status,
-            metadata: { facilityId, units: dto.units },
+            metadata: { facilityId, units: dto.units, isForSelf },
         });
         return request;
       });
@@ -104,7 +124,10 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
           where: { clientRequestId: dto.clientRequestId },
           include: { facility: true },
         });
-        if (duplicate) return this.assertSameCreate(duplicate, user.id, facilityId, dto, expiresAt);
+        if (duplicate) {
+          return this.assertSameCreate(duplicate, user.id, facilityId, dto, expiresAt, isForSelf,
+            beneficiaryName, beneficiaryRelationship, additionalInfo);
+        }
       }
       throw error;
     }
@@ -116,7 +139,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       where: { id: user.id },
       include: { donorProfile: true },
     });
-    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.DONOR || !donor.donorProfile) {
+    if (!donor || donor.status !== 'ACTIVE' || donor.role !== UserRole.INDIVIDUAL || !donor.donorProfile) {
       throw new ForbiddenException('An active donor profile is required.');
     }
     const donorBloodGroup = donor.donorProfile.bloodGroup;
@@ -154,6 +177,178 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       where: { facilityId },
       include: { facility: true },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async listMine(user: AuthenticatedUser) {
+    const current = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { id: true, status: true, role: true },
+    });
+    if (!current || current.status !== 'ACTIVE' || current.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('An active individual account is required.');
+    }
+    return this.prisma.emergencyRequest.findMany({
+      where: { createdByUserId: user.id },
+      include: { facility: { select: { id: true, name: true, locality: true, state: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async updateSubmission(
+    user: AuthenticatedUser,
+    requestId: string,
+    dto: Omit<UpdateRequestSubmissionDto, 'expectedUpdatedAt'>,
+    expectedUpdatedAt: Date,
+    syncEventId?: string,
+  ) {
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { id: true, status: true, role: true },
+    });
+    if (!currentUser || currentUser.status !== 'ACTIVE' || currentUser.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('An active individual account is required.');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const request = await this.lockRequest(tx, requestId);
+      if (!request || request.createdByUserId !== user.id) {
+        throw new NotFoundException('Your request was not found.');
+      }
+      if (syncEventId) {
+        const prior = await tx.requestActivity.findUnique({
+          where: { syncEventId },
+          select: { requestId: true },
+        });
+        if (prior) {
+          if (prior.requestId !== requestId) throw new ConflictException('This event ID was used for another request.');
+          return tx.emergencyRequest.findUniqueOrThrow({ where: { id: requestId }, include: { facility: true } });
+        }
+      }
+      if (request.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+        throw new ConflictException('The request changed after the device last synchronized.');
+      }
+      if (
+        request.status !== EmergencyRequestStatus.PENDING_FACILITY_VERIFICATION &&
+        request.status !== EmergencyRequestStatus.NEEDS_INFORMATION
+      ) {
+        throw new ConflictException('Only a request awaiting facility verification can be changed.');
+      }
+      const isForSelf = dto.isForSelf ?? request.isForSelf;
+      const beneficiaryName = dto.beneficiaryName === undefined
+        ? request.beneficiaryName
+        : dto.beneficiaryName.trim() || null;
+      const beneficiaryRelationship = dto.beneficiaryRelationship === undefined
+        ? request.beneficiaryRelationship
+        : dto.beneficiaryRelationship.trim() || null;
+      if (isForSelf && (beneficiaryName || beneficiaryRelationship)) {
+        throw new BadRequestException('Beneficiary details must be omitted for a request for yourself.');
+      }
+      if (!isForSelf && !beneficiaryName) {
+        throw new BadRequestException('Enter the patient or beneficiary name.');
+      }
+      const data: Prisma.EmergencyRequestUpdateInput = {
+        isForSelf,
+        beneficiaryName,
+        beneficiaryRelationship,
+        ...(dto.additionalInfo !== undefined ? { additionalInfo: dto.additionalInfo.trim() || null } : {}),
+        ...(dto.requestedBloodGroup !== undefined ? { requestedBloodGroup: dto.requestedBloodGroup } : {}),
+        ...(dto.urgency !== undefined ? { urgency: dto.urgency } : {}),
+        ...(dto.units !== undefined ? { units: dto.units } : {}),
+        ...(dto.expiresAt !== undefined
+          ? { expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null }
+          : {}),
+        ...(request.status === EmergencyRequestStatus.NEEDS_INFORMATION
+          ? {
+              status: EmergencyRequestStatus.PENDING_FACILITY_VERIFICATION,
+              reviewReason: null,
+              reviewedByUserId: null,
+              reviewedAt: null,
+            }
+          : {}),
+      };
+      const updated = await tx.emergencyRequest.update({
+        where: { id: requestId },
+        data,
+        include: { facility: true },
+      });
+      await createSyncActivity(tx, {
+        requestId,
+        actorUserId: user.id,
+        eventType: RequestActivityType.UPDATED,
+        syncEventId: syncEventId ?? null,
+        fromStatus: request.status,
+        toStatus: updated.status,
+        metadata: { fields: Object.keys(dto) },
+      });
+      return updated;
+    });
+  }
+
+  async review(
+    user: AuthenticatedUser,
+    requestId: string,
+    dto: ReviewEmergencyRequestDto,
+    syncEventId?: string,
+  ) {
+    const facilityId = await this.getWorkerFacility(user);
+    const reason = dto.reason?.trim() || null;
+    if (dto.action !== 'APPROVE' && !reason) {
+      throw new BadRequestException('A reason is required when rejecting or requesting information.');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const request = await this.lockRequest(tx, requestId);
+      if (!request || request.facilityId !== facilityId) {
+        throw new NotFoundException('Emergency request not found.');
+      }
+      if (syncEventId) {
+        const prior = await tx.requestActivity.findUnique({
+          where: { syncEventId },
+          select: { requestId: true },
+        });
+        if (prior) {
+          if (prior.requestId !== requestId) throw new ConflictException('This event ID was used for another request.');
+          return tx.emergencyRequest.findUniqueOrThrow({ where: { id: requestId }, include: { facility: true } });
+        }
+      }
+      if (request.updatedAt.getTime() !== new Date(dto.expectedUpdatedAt).getTime()) {
+        throw new ConflictException('The request changed after the device last synchronized.');
+      }
+      if (
+        request.status !== EmergencyRequestStatus.PENDING_FACILITY_VERIFICATION &&
+        request.status !== EmergencyRequestStatus.NEEDS_INFORMATION
+      ) {
+        throw new ConflictException('Only requests awaiting facility verification can be reviewed.');
+      }
+      const nextStatus = dto.action === 'APPROVE'
+        ? EmergencyRequestStatus.OPEN
+        : dto.action === 'REJECT'
+          ? EmergencyRequestStatus.REJECTED
+          : EmergencyRequestStatus.NEEDS_INFORMATION;
+      const eventType = dto.action === 'APPROVE'
+        ? RequestActivityType.FACILITY_APPROVED
+        : dto.action === 'REJECT'
+          ? RequestActivityType.FACILITY_REJECTED
+          : RequestActivityType.ADDITIONAL_INFO_REQUESTED;
+      const updated = await tx.emergencyRequest.update({
+        where: { id: requestId },
+        data: {
+          status: nextStatus,
+          reviewReason: reason,
+          reviewedByUserId: user.id,
+          reviewedAt: new Date(),
+        },
+        include: { facility: true },
+      });
+      await createSyncActivity(tx, {
+        requestId,
+        actorUserId: user.id,
+        eventType,
+        syncEventId: syncEventId ?? null,
+        fromStatus: request.status,
+        toStatus: nextStatus,
+        metadata: reason ? { reason } : undefined,
+      });
+      return updated;
     });
   }
 
@@ -247,18 +442,35 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async cancel(user: AuthenticatedUser, requestId: string) {
-    const facilityId = await this.getWorkerFacility(user);
+    const actor = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { id: true, status: true, role: true },
+    });
+    if (!actor || actor.status !== 'ACTIVE') throw new ForbiddenException('An active account is required.');
+    const facilityId = actor.role === UserRole.HEALTH_WORKER
+      ? await this.getWorkerFacility(user)
+      : null;
+    if (actor.role !== UserRole.HEALTH_WORKER && actor.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('Only the requester or assigned health facility can cancel this request.');
+    }
     const result = await this.prisma.$transaction(async (tx) => {
       const request = await this.lockRequest(tx, requestId);
-      if (!request || request.facilityId !== facilityId) {
+      const authorized =
+        request &&
+        (actor.role === UserRole.INDIVIDUAL
+          ? request.createdByUserId === user.id
+          : request.facilityId === facilityId);
+      if (!request || !authorized) {
         throw new NotFoundException('Emergency request not found.');
       }
       if (request.status === EmergencyRequestStatus.CANCELLED) {
         return { request: await tx.emergencyRequest.findUnique({ where: { id: requestId }, include: { facility: true } }) };
       }
-      const now = new Date();
-      if (await this.expireLockedRequest(tx, request, now)) return { expired: true as const };
-      if (!this.isOpen(request.status)) {
+      if (await this.expireLockedRequest(tx, request, new Date())) return { expired: true as const };
+      if (
+        request.status === EmergencyRequestStatus.FULFILLED ||
+        request.status === EmergencyRequestStatus.EXPIRED
+      ) {
         throw new ConflictException(`Cannot cancel a request in ${request.status} status.`);
       }
       const updated = await tx.emergencyRequest.update({
@@ -267,11 +479,11 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
         include: { facility: true },
       });
       await createSyncActivity(tx, {
-          requestId,
-          actorUserId: user.id,
-          eventType: RequestActivityType.CANCELLED,
-          fromStatus: request.status,
-          toStatus: EmergencyRequestStatus.CANCELLED,
+        requestId,
+        actorUserId: user.id,
+        eventType: RequestActivityType.CANCELLED,
+        fromStatus: request.status,
+        toStatus: EmergencyRequestStatus.CANCELLED,
       });
       return { request: updated };
     });
@@ -395,11 +607,27 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private assertSameCreate(
-    existing: { id: string; createdByUserId: string; facilityId: string; requestedBloodGroup: BloodGroup; urgency: string; units: number; expiresAt: Date | null },
+    existing: {
+      id: string;
+      createdByUserId: string;
+      facilityId: string;
+      requestedBloodGroup: BloodGroup;
+      urgency: string;
+      units: number;
+      expiresAt: Date | null;
+      isForSelf: boolean;
+      beneficiaryName: string | null;
+      beneficiaryRelationship: string | null;
+      additionalInfo: string | null;
+    },
     userId: string,
     facilityId: string,
     dto: CreateEmergencyRequestDto,
     expiresAt: Date | null,
+    isForSelf: boolean,
+    beneficiaryName: string | null,
+    beneficiaryRelationship: string | null,
+    additionalInfo: string | null,
   ) {
     const same =
       existing.createdByUserId === userId &&
@@ -407,6 +635,10 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       existing.requestedBloodGroup === dto.requestedBloodGroup &&
       existing.urgency === dto.urgency &&
       existing.units === dto.units &&
+      existing.isForSelf === isForSelf &&
+      existing.beneficiaryName === beneficiaryName &&
+      existing.beneficiaryRelationship === beneficiaryRelationship &&
+      existing.additionalInfo === additionalInfo &&
       (existing.expiresAt?.getTime() ?? null) === (expiresAt?.getTime() ?? null);
     if (!same) throw new ConflictException('This client request ID was already used for different request data.');
     return existing;

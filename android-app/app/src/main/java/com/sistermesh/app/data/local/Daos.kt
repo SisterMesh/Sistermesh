@@ -38,13 +38,32 @@ interface ProfileDao {
 }
 
 @Dao
+interface FacilityDao {
+    @Query("SELECT * FROM facilities ORDER BY state, name")
+    fun observe(): Flow<List<FacilityEntity>>
+
+    @Query("SELECT * FROM facilities ORDER BY state, name")
+    suspend fun getAll(): List<FacilityEntity>
+
+    @Upsert
+    suspend fun upsertAll(facilities: List<FacilityEntity>)
+
+    @Query("DELETE FROM facilities")
+    suspend fun clear()
+}
+
+@Dao
 interface EmergencyRequestDao {
     @Transaction
-    @Query("SELECT * FROM emergency_requests WHERE kind = 'OUTGOING' ORDER BY createdAt DESC")
+    @Query("SELECT * FROM emergency_requests WHERE kind = 'OUTGOING' AND isDemo = 0 ORDER BY createdAt DESC")
     fun observeOutgoingWithResponses(): Flow<List<RequestWithResponses>>
 
-    @Query("SELECT * FROM emergency_requests WHERE kind = 'INCOMING' ORDER BY createdAt DESC")
+    @Query("SELECT * FROM emergency_requests WHERE kind = 'INCOMING' AND isDemo = 0 ORDER BY createdAt DESC")
     fun observeIncoming(): Flow<List<EmergencyRequestEntity>>
+
+    @Transaction
+    @Query("SELECT * FROM emergency_requests WHERE kind = 'FACILITY' AND isDemo = 0 ORDER BY createdAt DESC")
+    fun observeFacilityWithResponses(): Flow<List<RequestWithResponses>>
 
     @Transaction
     @Query("SELECT * FROM emergency_requests WHERE localId = :localId LIMIT 1")
@@ -95,7 +114,7 @@ interface DonorResponseDao {
 
 @Dao
 interface DonationConfirmationDao {
-    @Query("SELECT * FROM donation_confirmations ORDER BY confirmedAt DESC")
+    @Query("SELECT * FROM donation_confirmations WHERE isDemo = 0 ORDER BY confirmedAt DESC")
     fun observeAll(): Flow<List<DonationConfirmationEntity>>
 
     @Upsert
@@ -151,6 +170,9 @@ interface SyncEventDao {
 
     @Query("SELECT * FROM sync_events WHERE localEntityId = :localEntityId ORDER BY localCreatedAt DESC LIMIT 1")
     suspend fun latestForEntity(localEntityId: String): SyncEventEntity?
+
+    @Query("UPDATE sync_events SET serverStatus = :serverStatus WHERE localEntityId = :localEntityId AND eventType = 'request.create'")
+    suspend fun setRequestPublicationStatus(localEntityId: String, serverStatus: String)
 
     @Query("SELECT EXISTS(SELECT 1 FROM sync_events WHERE localEntityId = :localEntityId AND status != 'PROCESSED')")
     suspend fun hasUnresolvedForEntity(localEntityId: String): Boolean

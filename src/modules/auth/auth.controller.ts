@@ -40,7 +40,7 @@ export class AuthController {
 
   @Post('register')
   @PublicRoute()
-  @ApiOperation({ summary: 'Register a donor or health-worker account.' })
+  @ApiOperation({ summary: 'Register an individual or health-worker account. Public registration cannot create administrators.' })
   @ApiResponse({ status: 201, description: 'Account created with its role-specific profile.' })
   async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) response: HeaderResponse) {
     return this.sessionResponse(await this.authService.register(dto), response);
@@ -48,7 +48,7 @@ export class AuthController {
 
   @Post('register/donor')
   @PublicRoute()
-  @ApiOperation({ summary: 'Register a donor account and donor profile; role is assigned by the server.' })
+  @ApiOperation({ summary: 'Legacy route: register an individual account with a donor profile.' })
   @ApiResponse({ status: 201, description: 'Account created; response contains an access token and safe user profile.' })
   @ApiResponse({ status: 409, description: 'Phone number is already registered.' })
   async registerDonor(@Body() dto: RegisterDonorDto, @Res({ passthrough: true }) response: HeaderResponse) {

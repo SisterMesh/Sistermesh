@@ -5,6 +5,7 @@ import com.sistermesh.app.data.local.AppMetadataEntity
 import com.sistermesh.app.data.local.DeviceInfoEntity
 import com.sistermesh.app.data.local.DonationConfirmationEntity
 import com.sistermesh.app.data.local.EmergencyRequestEntity
+import com.sistermesh.app.data.local.FacilityEntity
 import com.sistermesh.app.data.local.LocalEventFactory
 import com.sistermesh.app.data.local.ProfileEntity
 import com.sistermesh.app.data.local.RequestActivityEntity
@@ -50,10 +51,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             }
             val appMetadata = metadata.get()
             if (appMetadata == null) {
-                seedDemoData()
                 metadata.upsert(AppMetadataEntity(demoDataSeeded = true))
             } else if (!appMetadata.demoDataSeeded) {
-                seedDemoData()
                 metadata.upsert(appMetadata.copy(demoDataSeeded = true))
             }
         }
@@ -62,6 +61,10 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     fun observeProfile() = profiles.observe().map { it?.toDomain() }
     fun observeRequests() = requests.observeOutgoingWithResponses().map { rows -> rows.map { it.toDomain() } }
     fun observeIncoming() = requests.observeIncoming().map { rows -> rows.map { it.toIncomingDomain() } }
+    fun observeFacilityRequests() = requests.observeFacilityWithResponses().map { rows -> rows.map { it.toDomain() } }
+    fun observeFacilities() = database.facilityDao().observe().map { rows ->
+        rows.map { Facility(it.id, it.name, it.locality, it.state) }
+    }
     fun observeReceipts() = confirmations.observeAll().map { rows -> rows.map { it.toReceipt() } }
     fun observePendingEvents() = events.observePending()
     fun observeEventsForReview() = events.observeNeedsReview()
@@ -89,6 +92,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                 area = profile.area,
                 phone = profile.phone,
                 facility = profile.facility,
+                facilityId = profile.facilityId,
                 facilityLocation = profile.facilityLocation,
                 designation = profile.designation,
                 isAvailable = previous?.isAvailable ?: true,
@@ -99,6 +103,15 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
 
     suspend fun setAvailability(available: Boolean) = profiles.setAvailability(available)
     suspend fun setLanguage(language: String) = profiles.setLanguage(language)
+
+    suspend fun storeFacilities(facilities: List<Facility>) {
+        database.withTransaction {
+            database.facilityDao().clear()
+            database.facilityDao().upsertAll(facilities.map {
+                FacilityEntity(it.id, it.name, it.locality, it.state)
+            })
+        }
+    }
 
     suspend fun resetDemoProfile() {
         database.withTransaction {
@@ -111,24 +124,37 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         group: String,
         urgency: Urgency,
         units: Int,
-        note: String,
+        facilityId: String,
+        isForSelf: Boolean,
+        beneficiaryName: String?,
+        beneficiaryRelationship: String?,
+        additionalInfo: String?,
         ownerAccountId: String? = null
     ): BloodRequest {
         val now = LocalEventFactory.now()
         val localId = "REQ-${UUID.randomUUID().toString().take(8).uppercase()}"
         val profile = profiles.get()
         val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }.clientDeviceId.toString()
+        val facility = database.facilityDao().getAll().firstOrNull { it.id == facilityId }
+        val facilityName = facility?.let {
+            listOf(it.name, it.locality, it.state).filter(String::isNotBlank).joinToString(", ")
+        } ?: profile?.facility.orEmpty()
         val request = EmergencyRequestEntity(
             localId = localId,
-            kind = "OUTGOING",
+            kind = if (profile?.role == "CHW") "FACILITY" else "OUTGOING",
             bloodGroup = group,
             urgency = urgency.name,
             units = units,
-            note = note,
-            facility = profile?.facility.orEmpty(),
+            note = additionalInfo.orEmpty(),
+            additionalInfo = additionalInfo,
+            facility = facilityName.ifBlank { "Health facility" },
+            facilityId = facilityId,
+            isForSelf = isForSelf,
+            beneficiaryName = beneficiaryName,
+            beneficiaryRelationship = beneficiaryRelationship,
             createdAt = now,
             updatedAt = now,
-            status = RequestStatus.SEARCHING.name,
+            status = RequestStatus.PENDING_FACILITY_VERIFICATION.name,
             syncStatus = "PENDING"
         )
         val event = LocalEventFactory.requestCreate(
@@ -136,6 +162,11 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             bloodGroup = group,
             urgency = urgency.name,
             units = units,
+            facilityId = facilityId,
+            isForSelf = isForSelf,
+            beneficiaryName = beneficiaryName,
+            beneficiaryRelationship = beneficiaryRelationship,
+            additionalInfo = additionalInfo,
             originDeviceId = deviceId,
             localCreatedAt = now,
             ownerAccountId = ownerAccountId
@@ -169,8 +200,103 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                 ownerAccountId = ownerAccountId
             )
             requests.upsert(request.copy(status = RequestStatus.CANCELLED.name, updatedAt = now, syncStatus = "PENDING"))
-            activities.insertIfAbsent(activity(localId, "CANCELLED", "HEALTH_WORKER", now))
+            activities.insertIfAbsent(activity(localId, "CANCELLED", profiles.get()?.role, now))
             events.insertIfAbsent(event)
+        }
+    }
+
+    suspend fun updateSubmission(
+        localId: String,
+        group: String,
+        urgency: Urgency,
+        units: Int,
+        isForSelf: Boolean,
+        beneficiaryName: String?,
+        beneficiaryRelationship: String?,
+        additionalInfo: String?,
+        expectedUpdatedAt: String,
+        ownerAccountId: String? = null
+    ) {
+        val request = requests.get(localId) ?: return
+        val now = LocalEventFactory.now()
+        val patch = JSONObject()
+            .put("requestedBloodGroup", LocalEventFactory.apiBloodGroup(group))
+            .put("urgency", urgency.name)
+            .put("units", units)
+            .put("isForSelf", isForSelf)
+            .put("beneficiaryName", beneficiaryName)
+            .put("beneficiaryRelationship", beneficiaryRelationship)
+            .put("additionalInfo", additionalInfo)
+            .put("expectedUpdatedAt", expectedUpdatedAt)
+        val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }
+            .clientDeviceId.toString()
+        val event = LocalEventFactory.event(
+            eventType = "request.update",
+            localEntityId = localId,
+            entityId = request.serverId,
+            originDeviceId = deviceId,
+            localCreatedAt = now,
+            payload = patch.toString(),
+            dependsOnEventId = events.latestForEntity(localId)?.eventId,
+            blockedReason = when {
+                request.serverId == null -> "WAITING_FOR_SERVER_ENTITY_ID" to "This update is waiting for the request's server ID."
+                request.lastServerCursor == null -> "MISSING_SERVER_VERSION" to "Download the latest server version before this update can sync."
+                else -> null
+            },
+            ownerAccountId = ownerAccountId
+        )
+        database.withTransaction {
+            requests.upsert(
+                request.copy(
+                    bloodGroup = group,
+                    urgency = urgency.name,
+                    units = units,
+                    isForSelf = isForSelf,
+                    beneficiaryName = beneficiaryName,
+                    beneficiaryRelationship = beneficiaryRelationship,
+                    additionalInfo = additionalInfo,
+                    note = additionalInfo.orEmpty(),
+                    updatedAt = now,
+                    status = RequestStatus.PENDING_FACILITY_VERIFICATION.name,
+                    syncStatus = "PENDING"
+                )
+            )
+            activities.insertIfAbsent(activity(localId, "UPDATED", "INDIVIDUAL", now))
+            events.insertIfAbsent(event)
+        }
+    }
+
+    suspend fun reviewRequest(
+        localId: String,
+        action: String,
+        reason: String?,
+        expectedUpdatedAt: String,
+        ownerAccountId: String? = null
+    ) {
+        val request = requests.get(localId) ?: return
+        val now = LocalEventFactory.now()
+        val payload = JSONObject()
+            .put("action", action)
+            .put("expectedUpdatedAt", expectedUpdatedAt)
+        reason?.takeIf(String::isNotBlank)?.let { payload.put("reason", it) }
+        val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }
+            .clientDeviceId.toString()
+        val event = LocalEventFactory.event(
+            eventType = "request.review",
+            localEntityId = localId,
+            entityId = request.serverId,
+            originDeviceId = deviceId,
+            localCreatedAt = now,
+            payload = payload.toString(),
+            dependsOnEventId = events.latestForEntity(localId)?.eventId,
+            blockedReason = if (request.serverId == null || request.lastServerCursor == null) {
+                "MISSING_SERVER_VERSION" to "Download the latest server request before reviewing it."
+            } else null,
+            ownerAccountId = ownerAccountId
+        )
+        database.withTransaction {
+            events.insertIfAbsent(event)
+            activities.insertIfAbsent(activity(localId, "REVIEW_QUEUED", "HEALTH_WORKER", now))
         }
     }
 

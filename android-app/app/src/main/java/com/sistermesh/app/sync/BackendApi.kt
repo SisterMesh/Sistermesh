@@ -25,10 +25,36 @@ data class BackendUser(
     val donorLocality: String?,
     val donorProfileComplete: Boolean,
     val healthWorkerVerificationStatus: String?,
-    val healthWorkerFacilityId: String?
+    val healthWorkerFacilityId: String?,
+    val donorAvailable: Boolean? = null
 )
 
 data class BackendSession(val accessToken: String, val refreshCookie: String, val user: BackendUser)
+
+data class BackendFacility(
+    val id: String,
+    val name: String,
+    val locality: String,
+    val state: String
+)
+
+data class BackendDonorProfile(
+    val id: String,
+    val bloodGroup: String?,
+    val locality: String?,
+    val isAvailable: Boolean,
+    val isProfileComplete: Boolean
+)
+
+data class BackendDonorResponse(
+    val id: String,
+    val requestId: String,
+    val donorProfileId: String,
+    val status: String,
+    val respondedAt: String?,
+    val createdAt: String,
+    val request: ServerRequestSnapshot
+)
 
 data class RegisteredDevice(
     val deviceId: String,
@@ -57,7 +83,15 @@ data class ServerRequestSnapshot(
     val updatedAt: String,
     val facilityName: String,
     val facilityLocality: String,
-    val facilityState: String
+    val facilityState: String,
+    val facilityId: String = "",
+    val isMine: Boolean = false,
+    val isForSelf: Boolean? = null,
+    val beneficiaryName: String? = null,
+    val beneficiaryRelationship: String? = null,
+    val additionalInfo: String? = null,
+    val reviewReason: String? = null,
+    val reviewedAt: String? = null
 )
 
 data class ServerChange(
@@ -98,6 +132,11 @@ class BackendProtocolException(message: String) : IOException(message)
 
 interface SyncBackendApi {
     suspend fun login(phoneNumber: String, password: String): BackendSession
+    suspend fun registerIndividual(
+        displayName: String,
+        phoneNumber: String,
+        password: String
+    ): BackendSession
     suspend fun registerDonor(
         displayName: String,
         phoneNumber: String,
@@ -115,6 +154,15 @@ interface SyncBackendApi {
     suspend fun refresh(refreshCookie: String): BackendSession
     suspend fun logout(refreshCookie: String)
     suspend fun getMe(accessToken: String): BackendUser
+    suspend fun listFacilities(): List<BackendFacility>
+    suspend fun createDonorProfile(accessToken: String, bloodGroup: String, locality: String): BackendDonorProfile
+    suspend fun updateDonorProfile(
+        accessToken: String,
+        bloodGroup: String?,
+        locality: String?,
+        isAvailable: Boolean?
+    ): BackendDonorProfile
+    suspend fun getMyDonations(accessToken: String): List<BackendDonorResponse>
     suspend fun registerDevice(accessToken: String, clientDeviceId: String, deviceName: String): RegisteredDevice
     suspend fun uploadBatch(
         accessToken: String,
@@ -143,6 +191,19 @@ class BackendApi(
 
     override suspend fun login(phoneNumber: String, password: String): BackendSession =
         authSession("auth/login", JSONObject().put("phoneNumber", phoneNumber).put("password", password))
+
+    override suspend fun registerIndividual(
+        displayName: String,
+        phoneNumber: String,
+        password: String
+    ): BackendSession = authSession(
+        "auth/register",
+        JSONObject()
+            .put("displayName", displayName)
+            .put("phoneNumber", phoneNumber)
+            .put("password", password)
+            .put("role", "INDIVIDUAL")
+    )
 
     override suspend fun registerDonor(
         displayName: String,
@@ -192,6 +253,64 @@ class BackendApi(
 
     override suspend fun getMe(accessToken: String): BackendUser =
         parseUser(execute("GET", "auth/me", token = accessToken).json)
+
+    override suspend fun listFacilities(): List<BackendFacility> {
+        val facilities = execute("GET", "facilities").array
+            ?: throw BackendProtocolException("The facility response was invalid.")
+        return (0 until facilities.length()).map { index ->
+            val item = facilities.optJSONObject(index)
+                ?: throw BackendProtocolException("The server returned an invalid facility.")
+            BackendFacility(
+                id = item.requiredString("id"),
+                name = item.requiredString("name"),
+                locality = item.optNullableString("locality").orEmpty(),
+                state = item.optNullableString("state").orEmpty()
+            )
+        }
+    }
+
+    override suspend fun createDonorProfile(
+        accessToken: String,
+        bloodGroup: String,
+        locality: String
+    ): BackendDonorProfile {
+        val body = JSONObject().put("bloodGroup", bloodGroup)
+        if (locality.isNotBlank()) body.put("locality", locality)
+        return parseDonorProfile(execute("POST", "donors/me", body, token = accessToken).json)
+    }
+
+    override suspend fun updateDonorProfile(
+        accessToken: String,
+        bloodGroup: String?,
+        locality: String?,
+        isAvailable: Boolean?
+    ): BackendDonorProfile {
+        val body = JSONObject()
+        bloodGroup?.let { body.put("bloodGroup", it) }
+        locality?.let { body.put("locality", it) }
+        isAvailable?.let { body.put("isAvailable", it) }
+        return parseDonorProfile(execute("PATCH", "donors/me", body, token = accessToken).json)
+    }
+
+    override suspend fun getMyDonations(accessToken: String): List<BackendDonorResponse> {
+        val rows = execute("GET", "donor-responses/mine", token = accessToken).array
+            ?: throw BackendProtocolException("The server response omitted donor activity.")
+        return (0 until rows.length()).map { index ->
+            val item = rows.optJSONObject(index)
+                ?: throw BackendProtocolException("The server returned an invalid donor response.")
+            val request = item.optJSONObject("request")
+                ?: throw BackendProtocolException("The server returned donor activity without a request.")
+            BackendDonorResponse(
+                id = item.requiredString("id"),
+                requestId = item.requiredString("requestId"),
+                donorProfileId = item.requiredString("donorProfileId"),
+                status = item.requiredString("status"),
+                respondedAt = item.optNullableString("respondedAt"),
+                createdAt = item.requiredString("createdAt"),
+                request = parseRequestSnapshot(request)
+            )
+        }
+    }
 
     override suspend fun registerDevice(
         accessToken: String,
@@ -318,12 +437,22 @@ class BackendApi(
         client.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw httpException(response.code, raw)
-            val json = if (raw.isBlank()) JSONObject() else try {
-                JSONObject(raw)
-            } catch (_: Exception) {
-                throw BackendProtocolException("The server returned malformed JSON.")
+            val (json, array) = if (raw.isBlank()) {
+                JSONObject() to null
+            } else {
+                try {
+                    when (raw.trimStart().firstOrNull()) {
+                        '[' -> JSONObject() to JSONArray(raw)
+                        '{' -> JSONObject(raw) to null
+                        else -> throw BackendProtocolException("The server returned malformed JSON.")
+                    }
+                } catch (error: BackendProtocolException) {
+                    throw error
+                } catch (_: Exception) {
+                    throw BackendProtocolException("The server returned malformed JSON.")
+                }
             }
-            HttpResult(json, response.headers.values("Set-Cookie"))
+            HttpResult(json, response.headers.values("Set-Cookie"), array)
         }
     }
 
@@ -351,37 +480,59 @@ class BackendApi(
             donorLocality = donor?.optNullableString("locality"),
             donorProfileComplete = donor?.optBoolean("isProfileComplete") ?: false,
             healthWorkerVerificationStatus = worker?.optNullableString("verificationStatus"),
-            healthWorkerFacilityId = worker?.optNullableString("facilityId")
+            healthWorkerFacilityId = worker?.optNullableString("facilityId"),
+            donorAvailable = donor?.takeIf { it.has("isAvailable") }?.optBoolean("isAvailable")
         )
     }
 
     private fun parseChange(json: JSONObject): ServerChange {
         val request = json.optJSONObject("request")
             ?: throw BackendProtocolException("The server returned a change without a request snapshot.")
-        val facility = request.optJSONObject("facility")
-            ?: throw BackendProtocolException("The server returned a request without facility data.")
         return ServerChange(
             cursor = json.requiredString("cursor"),
             eventType = json.requiredString("eventType"),
             fromStatus = json.optNullableString("fromStatus"),
             toStatus = json.optNullableString("toStatus"),
             occurredAt = json.requiredString("occurredAt"),
-            request = ServerRequestSnapshot(
-                id = request.requiredString("id"),
-                requestedBloodGroup = request.requiredString("requestedBloodGroup"),
-                urgency = request.requiredString("urgency"),
-                units = request.optInt("units", -1).takeIf { it >= 0 }
-                    ?: throw BackendProtocolException("The server returned an invalid request unit count."),
-                status = request.requiredString("status"),
-                expiresAt = request.optNullableString("expiresAt"),
-                createdAt = request.requiredString("createdAt"),
-                updatedAt = request.requiredString("updatedAt"),
-                facilityName = facility.optNullableString("name").orEmpty(),
-                facilityLocality = facility.optNullableString("locality").orEmpty(),
-                facilityState = facility.optNullableString("state").orEmpty()
-            )
+            request = parseRequestSnapshot(request)
         )
     }
+
+    private fun parseRequestSnapshot(request: JSONObject): ServerRequestSnapshot {
+        val facility = request.optJSONObject("facility")
+            ?: throw BackendProtocolException("The server returned a request without facility data.")
+        return ServerRequestSnapshot(
+            id = request.requiredString("id"),
+            requestedBloodGroup = request.requiredString("requestedBloodGroup"),
+            urgency = request.requiredString("urgency"),
+            units = request.optInt("units", -1).takeIf { it >= 0 }
+                ?: throw BackendProtocolException("The server returned an invalid request unit count."),
+            status = request.requiredString("status"),
+            expiresAt = request.optNullableString("expiresAt"),
+            createdAt = request.requiredString("createdAt"),
+            updatedAt = request.optNullableString("updatedAt") ?: request.requiredString("createdAt"),
+            facilityName = facility.optNullableString("name").orEmpty(),
+            facilityLocality = facility.optNullableString("locality").orEmpty(),
+            facilityState = facility.optNullableString("state").orEmpty(),
+            facilityId = facility.optNullableString("id").orEmpty(),
+            isMine = request.optBoolean("isMine", false),
+            isForSelf = if (request.has("isForSelf") && !request.isNull("isForSelf")) request.optBoolean("isForSelf") else null,
+            beneficiaryName = request.optNullableString("beneficiaryName"),
+            beneficiaryRelationship = request.optNullableString("beneficiaryRelationship"),
+            additionalInfo = request.optNullableString("additionalInfo"),
+            reviewReason = request.optNullableString("reviewReason"),
+            reviewedAt = request.optNullableString("reviewedAt")
+        )
+    }
+
+    private fun parseDonorProfile(json: JSONObject): BackendDonorProfile =
+        BackendDonorProfile(
+            id = json.requiredString("id"),
+            bloodGroup = json.optNullableString("bloodGroup"),
+            locality = json.optNullableString("locality"),
+            isAvailable = json.optBoolean("isAvailable", true),
+            isProfileComplete = json.optBoolean("isProfileComplete", false)
+        )
 
     private fun httpException(status: Int, raw: String): BackendHttpException {
         val json = runCatching { JSONObject(raw) }.getOrNull()
@@ -403,7 +554,11 @@ class BackendApi(
         }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
-    private data class HttpResult(val json: JSONObject, val setCookies: List<String>)
+    private data class HttpResult(
+        val json: JSONObject,
+        val setCookies: List<String>,
+        val array: JSONArray? = null
+    )
 
     private fun JSONObject.requiredString(name: String): String =
         optNullableString(name) ?: throw BackendProtocolException("The server response omitted $name.")

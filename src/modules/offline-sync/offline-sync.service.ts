@@ -28,7 +28,9 @@ import { WithdrawDonorResponseDto } from '../donor-responses/dto/withdraw-donor-
 import { DonorResponsesService } from '../donor-responses/donor-responses.service';
 import { DONOR_GROUPS_FOR_RECIPIENT } from '../donors/blood-compatibility';
 import { CreateEmergencyRequestDto } from '../emergency-requests/dto/create-emergency-request.dto';
+import { ReviewEmergencyRequestDto } from '../emergency-requests/dto/review-emergency-request.dto';
 import { UpdateEmergencyRequestDto } from '../emergency-requests/dto/update-emergency-request.dto';
+import { UpdateRequestSubmissionDto } from '../emergency-requests/dto/update-request-submission.dto';
 import { EmergencyRequestsService } from '../emergency-requests/emergency-requests.service';
 import { SyncRequestUpdatePayloadDto } from './dto/sync-request-update-payload.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
@@ -154,8 +156,8 @@ export class OfflineSyncService {
 
   async uploadBatch(user: AuthenticatedUser, deviceId: string, dto: UploadSyncBatchDto) {
     const device = await this.assertOwnedActiveDevice(user.id, deviceId);
-    if (user.role !== UserRole.DONOR && user.role !== UserRole.HEALTH_WORKER) {
-      throw new ForbiddenException('Only donors and health workers can upload coordination events.');
+    if (user.role !== UserRole.INDIVIDUAL && user.role !== UserRole.HEALTH_WORKER) {
+      throw new ForbiddenException('Only individuals and health workers can upload coordination events.');
     }
     if (!isUUID(dto.clientBatchId) || !Array.isArray(dto.events) || dto.events.length < 1 || dto.events.length > 100) {
       throw new BadRequestException('A batch requires a UUID and between 1 and 100 events.');
@@ -296,11 +298,18 @@ export class OfflineSyncService {
         request: {
           select: {
             id: true,
+            createdByUserId: true,
             requestedBloodGroup: true,
             urgency: true,
             units: true,
             status: true,
             expiresAt: true,
+            isForSelf: true,
+            beneficiaryName: true,
+            beneficiaryRelationship: true,
+            additionalInfo: true,
+            reviewReason: true,
+            reviewedAt: true,
             createdAt: true,
             updatedAt: true,
             facility: { select: { id: true, name: true, locality: true, state: true } },
@@ -325,14 +334,40 @@ export class OfflineSyncService {
       checkpoint: checkpoint.lastCursor.toString(),
       nextCursor: pendingCursor.toString(),
       hasMore,
-      changes: page.map((activity) => ({
-        cursor: activity.syncCursor.toString(),
-        eventType: activity.eventType,
-        fromStatus: activity.fromStatus,
-        toStatus: activity.toStatus,
-        occurredAt: activity.occurredAt,
-        request: activity.request,
-      })),
+      changes: page.map((activity) => {
+        const request = activity.request;
+        const isMine = request.createdByUserId === user.id;
+        const canSeePrivateDetails = isMine || user.role === UserRole.HEALTH_WORKER;
+        return {
+          cursor: activity.syncCursor.toString(),
+          eventType: activity.eventType,
+          fromStatus: activity.fromStatus,
+          toStatus: activity.toStatus,
+          occurredAt: activity.occurredAt,
+          request: {
+            id: request.id,
+            isMine,
+            requestedBloodGroup: request.requestedBloodGroup,
+            urgency: request.urgency,
+            units: request.units,
+            status: request.status,
+            expiresAt: request.expiresAt,
+            createdAt: request.createdAt,
+            updatedAt: request.updatedAt,
+            facility: request.facility,
+            ...(canSeePrivateDetails
+              ? {
+                  isForSelf: request.isForSelf,
+                  beneficiaryName: request.beneficiaryName,
+                  beneficiaryRelationship: request.beneficiaryRelationship,
+                  additionalInfo: request.additionalInfo,
+                  reviewReason: request.reviewReason,
+                  reviewedAt: request.reviewedAt,
+                }
+              : {}),
+          },
+        };
+      }),
     };
   }
 
@@ -587,7 +622,17 @@ export class OfflineSyncService {
     switch (event.eventType) {
       case SyncEventType.REQUEST_CREATE: {
         if (event.entityId) throw new SyncValidationError('INVALID_ENTITY_ID', 'A request creation event must not include a server entity ID.');
-        this.assertPayloadKeys(event.payload, ['requestedBloodGroup', 'urgency', 'units', 'expiresAt']);
+        this.assertPayloadKeys(event.payload, [
+          'requestedBloodGroup',
+          'urgency',
+          'units',
+          'expiresAt',
+          'facilityId',
+          'isForSelf',
+          'beneficiaryName',
+          'beneficiaryRelationship',
+          'additionalInfo',
+        ]);
         const dto = await this.validatePayload(CreateEmergencyRequestDto, {
           ...event.payload,
           clientRequestId: event.eventId,
@@ -597,6 +642,29 @@ export class OfflineSyncService {
       }
       case SyncEventType.REQUEST_UPDATE: {
         this.assertEntityId(event);
+        if (user.role === UserRole.INDIVIDUAL) {
+          this.assertPayloadKeys(event.payload, [
+            'requestedBloodGroup',
+            'urgency',
+            'units',
+            'expiresAt',
+            'expectedUpdatedAt',
+            'isForSelf',
+            'beneficiaryName',
+            'beneficiaryRelationship',
+            'additionalInfo',
+          ]);
+          const payload = await this.validatePayload(UpdateRequestSubmissionDto, event.payload);
+          const { expectedUpdatedAt, ...updates } = payload;
+          const updated = await this.emergencyRequests.updateSubmission(
+            user,
+            entityId,
+            updates,
+            new Date(expectedUpdatedAt),
+            event.eventId,
+          );
+          return updated.id;
+        }
         this.assertPayloadKeys(event.payload, [
           'requestedBloodGroup',
           'urgency',
@@ -613,6 +681,13 @@ export class OfflineSyncService {
           new Date(expectedUpdatedAt),
           event.eventId,
         );
+        return updated.id;
+      }
+      case SyncEventType.REQUEST_REVIEW: {
+        this.assertEntityId(event);
+        this.assertPayloadKeys(event.payload, ['action', 'reason', 'expectedUpdatedAt']);
+        const payload = await this.validatePayload(ReviewEmergencyRequestDto, event.payload);
+        const updated = await this.emergencyRequests.review(user, entityId, payload, event.eventId);
         return updated.id;
       }
       case SyncEventType.DONOR_RESPONSE_ACCEPT:
@@ -831,21 +906,28 @@ export class OfflineSyncService {
       }
       return { facilityId: worker.facilityId };
     }
-    if (currentUser.role !== UserRole.DONOR) {
-      throw new ForbiddenException('Only donors and health workers can download coordination changes.');
+    if (currentUser.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('Only individuals and health workers can download coordination changes.');
     }
     const donor = await this.prisma.donorProfile.findUnique({
       where: { userId: user.id },
       select: { bloodGroup: true },
     });
-    if (!donor?.bloodGroup) throw new ForbiddenException('A completed donor blood group profile is required.');
-    const recipientGroups = Object.entries(DONOR_GROUPS_FOR_RECIPIENT)
-      .filter(([, donorGroups]) => donorGroups.includes(donor.bloodGroup!))
-      .map(([recipient]) => recipient as BloodGroup);
+    const publicRequestFilter: Prisma.EmergencyRequestWhereInput[] = donor?.bloodGroup
+      ? [{
+          requestedBloodGroup: {
+            in: Object.entries(DONOR_GROUPS_FOR_RECIPIENT)
+              .filter(([, donorGroups]) => donorGroups.includes(donor.bloodGroup!))
+              .map(([recipient]) => recipient as BloodGroup),
+          },
+          status: { in: ['OPEN', 'PARTIALLY_FILLED'] },
+        }]
+      : [];
     return {
       OR: [
-        { requestedBloodGroup: { in: recipientGroups } },
+        { createdByUserId: user.id },
         { donorResponses: { some: { donorUserId: user.id } } },
+        ...publicRequestFilter,
       ],
     };
   }

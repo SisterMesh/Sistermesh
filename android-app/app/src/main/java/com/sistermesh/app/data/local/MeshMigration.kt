@@ -155,3 +155,30 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         )
     }
 }
+
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `profiles` ADD COLUMN `facilityId` TEXT")
+        db.execSQL("UPDATE `profiles` SET `role` = 'INDIVIDUAL' WHERE `role` = 'DONOR'")
+
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `facilityId` TEXT")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `isForSelf` INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `beneficiaryName` TEXT")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `beneficiaryRelationship` TEXT")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `additionalInfo` TEXT")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `reviewReason` TEXT")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `facilities` (
+                `id` TEXT NOT NULL,
+                `name` TEXT NOT NULL,
+                `locality` TEXT NOT NULL,
+                `state` TEXT NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_facilities_state_locality` ON `facilities` (`state`, `locality`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_facilities_name` ON `facilities` (`name`)")
+    }
+}

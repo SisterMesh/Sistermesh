@@ -1,6 +1,6 @@
 # SisterMesh Offline Sync API Contract
 
-Version 1 of the backend sync event contract. This document describes the server API only; it does not assume that an Android Room schema or Bluetooth mesh implementation exists.
+Version 1 of the backend sync event contract. Individual accounts may request blood and may separately opt in as donors; health workers remain a separate verified role. Public registration cannot create administrators.
 
 ## Authentication and device registration
 
@@ -41,7 +41,11 @@ Every batch event has this envelope:
     "requestedBloodGroup": "O_NEGATIVE",
     "urgency": "CRITICAL",
     "units": 2,
-    "expiresAt": "2026-11-06T16:30:00.000Z"
+    "facilityId": "5acc0951-5064-4aa3-88ef-a3c2ce14a5e2",
+    "isForSelf": false,
+    "beneficiaryName": "Private beneficiary",
+    "beneficiaryRelationship": "Relative",
+    "additionalInfo": "Private note for the facility"
   }
 }
 ```
@@ -52,15 +56,20 @@ Only these event types are supported:
 
 | Event type | `entityId` | Payload |
 |---|---|---|
-| `request.create` | `null` | `requestedBloodGroup`, `urgency`, `units`, optional `expiresAt` |
-| `request.update` | Request UUID | Request fields to change plus required `expectedUpdatedAt` from the last downloaded server snapshot |
+| `request.create` | `null` | `requestedBloodGroup`, `urgency`, `units`, required active `facilityId` for individuals, optional `isForSelf`, beneficiary details, facility-only `additionalInfo`, optional `expiresAt` |
+| `request.update` | Request UUID | Individual owners may edit pending/needs-information requests; health workers may edit requests at their assigned facility. Both require `expectedUpdatedAt`. |
+| `request.review` | Request UUID | Health-worker-only `action` (`APPROVE`, `REJECT`, `REQUEST_INFORMATION`), `expectedUpdatedAt`, and required `reason` for rejection or information requests |
 | `donor-response.accept` | Request UUID | Empty object |
 | `donor-response.decline` | Request UUID | Empty object |
 | `donor.withdraw` | Request UUID | Empty object |
 | `request.cancel` | Request UUID | Empty object |
 | `donation.confirm` | Request UUID | `donorProfileId`, `receiptHash`, optional `consentedAt` |
 
-The backend rejects undeclared envelope or payload fields. This also prevents clients from assigning another user, role, or facility. Existing Phase 3 role, verification, facility, lifecycle, and idempotency checks apply to each operation.
+The backend rejects undeclared envelope or payload fields. It derives user, role, and a health worker's facility from the authenticated account; a health worker cannot submit a different facility ID. Individuals must select an active facility. Facility approval, rejection, and assignment are restricted to verified health workers and authorised administrative operations. `ADMIN` cannot be created through public registration.
+
+New requests begin as `PENDING_FACILITY_VERIFICATION`. They are not included in donor feeds or Bluetooth broadcasts until a verified facility approves them. Rejection sets `REJECTED`; an information request sets `NEEDS_INFORMATION`; a resubmission returns the request to pending verification. Only `OPEN` and `PARTIALLY_FILLED` requests are published to donors.
+
+`beneficiaryName`, `beneficiaryRelationship`, and `additionalInfo` are private to the requester and the assigned facility. Donor feeds and mesh request packets contain only the blood group, urgency, unit count, approved facility label, and public lifecycle status. They never contain beneficiary identity, contact details, or exact location.
 
 ## Batch upload
 
@@ -80,7 +89,12 @@ The backend rejects undeclared envelope or payload fields. This also prevents cl
       "payload": {
         "requestedBloodGroup": "O_NEGATIVE",
         "urgency": "CRITICAL",
-        "units": 2
+        "units": 2,
+        "facilityId": "5acc0951-5064-4aa3-88ef-a3c2ce14a5e2",
+        "isForSelf": false,
+        "beneficiaryName": "Private beneficiary",
+        "beneficiaryRelationship": "Relative",
+        "additionalInfo": "Private note for the facility"
       }
     }
   ]
@@ -158,6 +172,7 @@ Example page:
       "occurredAt": "2026-11-06T12:31:00.000Z",
       "request": {
         "id": "3ab6c6dd-0d0a-43dc-a5b7-b840b6226670",
+        "isMine": false,
         "requestedBloodGroup": "O_NEGATIVE",
         "urgency": "CRITICAL",
         "units": 2,
@@ -175,12 +190,12 @@ Example page:
 }
 ```
 
-The activity cursor, not the client timestamp, orders changes. Health workers receive only activity for their verified active facility. Donors receive only compatible request snapshots and requests for which they have a response; the feed does not include another donor's identity, contact details, or response payload.
+The activity cursor, not the client timestamp, orders changes. Health workers receive only activity for their verified active facility. Individuals receive their own request activity and compatible, approved requests. `isMine` is server-derived. Private fields are present only for the request owner and assigned health workers; they are omitted from donor snapshots. The feed does not include another donor's identity, contact details, or response payload.
 
 ## Conflict and relay limitations
 
 `request.update` requires `expectedUpdatedAt`; a stale update is retained as a conflict rather than overwriting newer server state. Request acceptance, cancellation, expiry, withdrawal, and donation confirmation continue to use Phase 3 transaction and lifecycle checks. Event IDs are globally unique; reusing one with different content or ownership records the incoming conflict separately.
 
-For security, this API currently accepts only events whose `originDeviceId` matches the registered device making the JWT-authenticated upload. A Bluetooth-relayed event originating on another device is retained as rejected and is not applied under the uploader's identity. Supporting authenticated mesh relay requires a future trust/consent contract; the backend does not impersonate the originating user.
+For security, this API currently accepts only events whose `originDeviceId` matches the registered device making the JWT-authenticated upload. A Bluetooth-relayed event originating on another device is retained as rejected and is not applied under the uploader's identity. The Android client keeps unverified request events local and only creates a sanitized mesh packet after server approval; the backend does not impersonate a relay origin.
 
-Room storage, Android repositories and queues, Bluetooth transport, mesh relay authentication, and conflict-resolution UI are not implemented in this phase.
+The Android client persists requests, cached facilities, sync events, review states, and donor activity in Room with additive migrations. Bluetooth pairing and event signatures remain in place; request creation packets are gated on server-approved status and exclude private beneficiary details.

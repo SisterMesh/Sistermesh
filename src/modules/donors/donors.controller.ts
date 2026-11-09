@@ -11,7 +11,7 @@ import { DonorsService } from './donors.service';
 @ApiTags('Donor profiles')
 @ApiBearerAuth()
 @UseGuards(RolesGuard)
-@Roles(UserRole.DONOR)
+@Roles(UserRole.INDIVIDUAL)
 @Controller('donors')
 export class DonorsController {
   constructor(private readonly service: DonorsService) {}

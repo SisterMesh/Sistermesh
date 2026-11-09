@@ -56,9 +56,12 @@ class AppViewModel(
     var accountBusy by mutableStateOf(false); private set
     var accountError by mutableStateOf<String?>(null); private set
     var accountMessage by mutableStateOf<String?>(null)
+    var facilityCatalogError by mutableStateOf<String?>(null)
 
     val incoming = mutableStateListOf<IncomingRequest>()
     val requests = mutableStateListOf<BloodRequest>()
+    val facilityRequests = mutableStateListOf<BloodRequest>()
+    val facilities = mutableStateListOf<Facility>()
     val receipts = mutableStateListOf<Receipt>()
     val messages = mutableStateListOf<ChatMessage>()
     val pendingEvents = mutableStateListOf<SyncEventEntity>()
@@ -77,6 +80,8 @@ class AppViewModel(
 
             launch { repository.observeProfile().collect { profile = it } }
             launch { repository.observeRequests().collect { replace(requests, it) } }
+            launch { repository.observeFacilityRequests().collect { replace(facilityRequests, it) } }
+            launch { repository.observeFacilities().collect { replace(facilities, it) } }
             launch { repository.observeIncoming().collect { replace(incoming, it) } }
             launch { repository.observeReceipts().collect { replace(receipts, it) } }
             launch { repository.observePendingEvents().collect { replace(pendingEvents, it) } }
@@ -87,12 +92,53 @@ class AppViewModel(
             launch { repository.observeFailedSyncCount().collect { failedSyncCount = it } }
             launch { repository.observeConflicts().collect { replace(conflicts, it) } }
             launch { repository.observeConflictCount().collect { conflictCount = it } }
-            launch { authRepository.state.collect { accountState = it; updateSyncScheduling() } }
+            launch {
+                authRepository.state.collect { state ->
+                    accountState = state
+                    updateSyncScheduling()
+                    val user = (state as? AccountState.SignedIn)?.user ?: return@collect
+                    val local = profile ?: return@collect
+                    val updated = when {
+                        local.role == Role.CHW &&
+                            !user.healthWorkerFacilityId.isNullOrBlank() &&
+                            local.facilityId != user.healthWorkerFacilityId ->
+                            local.copy(facilityId = user.healthWorkerFacilityId)
+                        local.role == Role.INDIVIDUAL &&
+                            local.bloodGroup.isBlank() &&
+                            !user.donorBloodGroup.isNullOrBlank() ->
+                            local.copy(
+                                bloodGroup = user.donorBloodGroup.toLocalBloodGroup(),
+                                area = user.donorLocality.orEmpty()
+                            )
+                        else -> local
+                    }
+                    if (updated != local) {
+                        repository.registerProfile(updated)
+                        profile = updated
+                    }
+                    if (local.role == Role.INDIVIDUAL && local.bloodGroup.isBlank() && user.donorAvailable != null) {
+                        available = user.donorAvailable
+                        repository.setAvailability(available)
+                    }
+                }
+            }
             launch {
                 connectivityStatus.online.collect { online ->
                     isOnline = online
                     val expectedRole = profile?.role?.toBackendRole()
-                    if (online) authRepository.restore(expectedRole) else authRepository.restoreOffline()
+                    if (online) {
+                        authRepository.restore(expectedRole)
+                        runCatching {
+                            repository.storeFacilities(authRepository.listFacilities().map {
+                                Facility(it.id, it.name, it.locality, it.state)
+                            })
+                        }.onSuccess { facilityCatalogError = null }
+                            .onFailure {
+                                if (facilities.isEmpty()) {
+                                    facilityCatalogError = "Facility list could not be refreshed. Connect to the internet to load facilities."
+                                }
+                            }
+                    } else authRepository.restoreOffline()
                 }
             }
             launch {
@@ -119,7 +165,7 @@ class AppViewModel(
 
     fun loginAccount(phoneNumber: String, password: String) {
         val expectedRole = profile?.role?.toBackendRole() ?: run {
-            accountError = "Create a local donor or health-worker profile first."
+            accountError = "Create a local individual or health-worker profile first."
             return
         }
         accountBusy = true
@@ -139,7 +185,7 @@ class AppViewModel(
 
     fun registerAccount(phoneNumber: String, password: String, professionalId: String = "") {
         val localProfile = profile ?: run {
-            accountError = "Create a local donor or health-worker profile first."
+            accountError = "Create a local individual or health-worker profile first."
             return
         }
         accountBusy = true
@@ -148,13 +194,19 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 when (localProfile.role) {
-                    Role.DONOR -> authRepository.registerDonor(
+                    Role.INDIVIDUAL -> {
+                        authRepository.registerIndividual(
                         displayName = localProfile.name,
                         phoneNumber = phoneNumber.trim(),
-                        password = password,
-                        bloodGroup = localProfile.bloodGroup.toBackendBloodGroup(),
-                        locality = localProfile.area
-                    )
+                        password = password
+                        )
+                        if (localProfile.bloodGroup.isNotBlank()) {
+                            authRepository.createDonorProfile(
+                                bloodGroup = localProfile.bloodGroup.toBackendBloodGroup(),
+                                locality = localProfile.area
+                            )
+                        }
+                    }
                     Role.CHW -> authRepository.registerHealthWorker(
                         displayName = localProfile.name,
                         phoneNumber = phoneNumber.trim(),
@@ -273,7 +325,7 @@ class AppViewModel(
     }
 
     private fun Role.toBackendRole(): String = when (this) {
-        Role.DONOR -> "DONOR"
+        Role.INDIVIDUAL -> "INDIVIDUAL"
         Role.CHW -> "HEALTH_WORKER"
     }
 
@@ -289,12 +341,57 @@ class AppViewModel(
         else -> throw IllegalArgumentException("Choose a valid blood group before creating an account.")
     }
 
+    private fun String.toLocalBloodGroup(): String = when (this) {
+        "A_POSITIVE" -> "A+"
+        "A_NEGATIVE" -> "A-"
+        "B_POSITIVE" -> "B+"
+        "B_NEGATIVE" -> "B-"
+        "AB_POSITIVE" -> "AB+"
+        "AB_NEGATIVE" -> "AB-"
+        "O_POSITIVE" -> "O+"
+        "O_NEGATIVE" -> "O-"
+        else -> ""
+    }
+
     fun updateAvailability(v: Boolean) {
         available = v
-        viewModelScope.launch { repository.setAvailability(v) }
+        viewModelScope.launch {
+            repository.setAvailability(v)
+            scheduleSyncAfterLocalChange()
+        }
+    }
+
+    fun registerAsDonor(group: String, area: String, onSaved: () -> Unit = {}) {
+        val current = profile ?: return
+        if (current.role != Role.INDIVIDUAL) {
+            accountError = "Donor participation requires an individual account."
+            return
+        }
+        viewModelScope.launch {
+            val updated = current.copy(bloodGroup = group, area = area.trim())
+            repository.registerProfile(updated)
+            profile = updated
+            val user = (accountState as? AccountState.SignedIn)?.user
+            if (user?.role == "INDIVIDUAL" && isOnline) {
+                runCatching {
+                    if (user.donorBloodGroup.isNullOrBlank()) {
+                        authRepository.createDonorProfile(group.toBackendBloodGroup(), area.trim())
+                    } else {
+                        authRepository.updateDonorProfile(
+                            bloodGroup = group.toBackendBloodGroup(),
+                            locality = area.trim(),
+                            isAvailable = available
+                        )
+                    }
+                }.onFailure { accountError = accountErrorMessage(it as? Exception ?: Exception(it)) }
+            }
+            scheduleSyncAfterLocalChange()
+            onSaved()
+        }
     }
 
     fun request(id: String) = requests.firstOrNull { it.id == id }
+        ?: facilityRequests.firstOrNull { it.id == id }
     fun incomingById(id: String) = incoming.firstOrNull { it.id == id }
     fun receipt(id: String) = receipts.firstOrNull { it.id == id }
 
@@ -304,15 +401,84 @@ class AppViewModel(
         group: String,
         urgency: Urgency,
         units: Int,
-        note: String,
+        facilityId: String,
+        isForSelf: Boolean,
+        beneficiaryName: String?,
+        beneficiaryRelationship: String?,
+        additionalInfo: String?,
         onSaved: (String) -> Unit
     ) {
         viewModelScope.launch {
-            val created = repository.createRequest(group, urgency, units, note, eventOwnerAccountId())
+            val created = repository.createRequest(
+                group,
+                urgency,
+                units,
+                facilityId,
+                isForSelf,
+                beneficiaryName,
+                beneficiaryRelationship,
+                additionalInfo,
+                eventOwnerAccountId()
+            )
             scheduleSyncAfterLocalChange()
-            requests.removeAll { it.id == created.id }
-            requests.add(0, created)
+            if (profile?.role == Role.CHW) {
+                facilityRequests.removeAll { it.id == created.id }
+                facilityRequests.add(0, created)
+            } else {
+                requests.removeAll { it.id == created.id }
+                requests.add(0, created)
+            }
             onSaved(created.id)
+        }
+    }
+
+    @Deprecated("Use the unified request form with an active facility and beneficiary details.")
+    fun createRequest(
+        group: String,
+        urgency: Urgency,
+        units: Int,
+        note: String,
+        onSaved: (String) -> Unit
+    ) {
+        val facilityId = profile?.facilityId.orEmpty()
+        createRequest(group, urgency, units, facilityId, false, null, null, note, onSaved)
+    }
+
+    fun updateSubmission(
+        request: BloodRequest,
+        group: String,
+        urgency: Urgency,
+        units: Int,
+        isForSelf: Boolean,
+        beneficiaryName: String?,
+        beneficiaryRelationship: String?,
+        additionalInfo: String?
+    ) {
+        viewModelScope.launch {
+            val expectedUpdatedAt = request.serverUpdatedAt ?: run {
+                accountError = "Sync this request before sending an update."
+                return@launch
+            }
+            repository.updateSubmission(
+                request.id,
+                group,
+                urgency,
+                units,
+                isForSelf,
+                beneficiaryName,
+                beneficiaryRelationship,
+                additionalInfo,
+                expectedUpdatedAt,
+                eventOwnerAccountId()
+            )
+            scheduleSyncAfterLocalChange()
+        }
+    }
+
+    fun reviewRequest(requestId: String, action: String, reason: String?, expectedUpdatedAt: String) {
+        viewModelScope.launch {
+            repository.reviewRequest(requestId, action, reason, expectedUpdatedAt, eventOwnerAccountId())
+            scheduleSyncAfterLocalChange()
         }
     }
 

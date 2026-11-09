@@ -8,7 +8,7 @@ import { DonorResponsesService } from './donor-responses.service';
 describe('DonorResponsesService', () => {
   const user: AuthenticatedUser = {
     id: '00000000-0000-4000-8000-000000000011',
-    role: UserRole.DONOR,
+    role: UserRole.INDIVIDUAL,
     status: 'ACTIVE',
   };
   const requestId = '00000000-0000-4000-8000-000000000014';
@@ -35,7 +35,7 @@ describe('DonorResponsesService', () => {
         }),
         updateMany: jest.fn(),
       },
-      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE', role: UserRole.DONOR, donorProfile }) },
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE', role: UserRole.INDIVIDUAL, donorProfile }) },
       donorResponse: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue(created),
@@ -44,7 +44,7 @@ describe('DonorResponsesService', () => {
       syncCursorState: { update: jest.fn().mockResolvedValue({ value: 1n }) },
     };
     const prisma = {
-      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE', role: UserRole.DONOR, donorProfile }) },
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE', role: UserRole.INDIVIDUAL, donorProfile }) },
       donorResponse: { findUnique: jest.fn().mockResolvedValue(null) },
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     } as unknown as PrismaService;
@@ -80,7 +80,7 @@ describe('DonorResponsesService', () => {
       submittedStatus: DonorResponseStatus.ACCEPTED,
     };
     const prisma = {
-      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE', role: UserRole.DONOR, donorProfile }) },
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE', role: UserRole.INDIVIDUAL, donorProfile }) },
       donorResponse: { findUnique: jest.fn().mockResolvedValue(withdrawn) },
       $transaction: jest.fn(),
     } as unknown as PrismaService;
@@ -122,7 +122,7 @@ describe('DonorResponsesService', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: user.id,
           status: 'ACTIVE',
-          role: UserRole.DONOR,
+          role: UserRole.INDIVIDUAL,
           donorProfile: { id: donorProfile.id },
         }),
       },

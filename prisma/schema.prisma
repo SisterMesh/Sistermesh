@@ -8,6 +8,8 @@ datasource db {
 }
 
 enum UserRole {
+  INDIVIDUAL
+  // Legacy value retained for existing clients; migrated accounts use INDIVIDUAL.
   DONOR
   HEALTH_WORKER
   ADMIN
@@ -49,6 +51,9 @@ enum RequestUrgency {
 }
 
 enum EmergencyRequestStatus {
+  PENDING_FACILITY_VERIFICATION
+  NEEDS_INFORMATION
+  REJECTED
   OPEN
   PARTIALLY_FILLED
   FULFILLED
@@ -74,6 +79,9 @@ enum DonorResponseStatus {
 enum RequestActivityType {
   CREATED
   DISTRIBUTED
+  FACILITY_APPROVED
+  FACILITY_REJECTED
+  ADDITIONAL_INFO_REQUESTED
   DONOR_RESPONDED
   STATUS_CHANGED
   CANCELLED
@@ -128,6 +136,7 @@ model User {
   healthWorkerProfile   HealthWorkerProfile?
   registeredDevices     RegisteredDevice[]
   createdRequests       EmergencyRequest[]     @relation("RequestCreator")
+  reviewedRequests      EmergencyRequest[]     @relation("RequestReviewer")
   donorResponses        DonorResponse[]
   recordedConfirmations DonationConfirmation[] @relation("ConfirmationRecorder")
   notifications         Notification[]
@@ -225,6 +234,13 @@ model EmergencyRequest {
   clientRequestId    String                 @unique @db.Uuid
   createdByUserId    String                 @db.Uuid
   facilityId         String                 @db.Uuid
+  isForSelf          Boolean                @default(true)
+  beneficiaryName    String?
+  beneficiaryRelationship String?
+  additionalInfo     String?
+  reviewReason       String?
+  reviewedByUserId   String?                @db.Uuid
+  reviewedAt         DateTime?
   requestedBloodGroup BloodGroup
   urgency            RequestUrgency
   units               Int
@@ -233,6 +249,7 @@ model EmergencyRequest {
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
   createdBy           User                   @relation("RequestCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  reviewedBy          User?                  @relation("RequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
   facility            Facility               @relation(fields: [facilityId], references: [id], onDelete: Restrict)
   donorResponses      DonorResponse[]
   activityHistory     RequestActivity[]

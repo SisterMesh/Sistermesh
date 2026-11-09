@@ -7,6 +7,8 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.sistermesh.app.data.local.MIGRATION_1_2
 import com.sistermesh.app.data.local.MIGRATION_2_3
+import com.sistermesh.app.data.local.MIGRATION_3_4
+import com.sistermesh.app.data.local.EmergencyRequestEntity
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -36,12 +38,15 @@ class SisterMeshRepositoryTest {
                     role = Role.CHW,
                     name = "Worker",
                     facility = "Community Clinic",
+                    facilityId = "facility-1",
                     facilityLocation = "Riverside",
                     designation = "Midwife"
                 )
             )
 
-            val created = repository.createRequest("O-", Urgency.CRITICAL, 2, "Local-only note")
+            val created = repository.createRequest(
+                "O-", Urgency.CRITICAL, 2, "facility-1", false, "Patient A", "Sibling", "Local-only note"
+            )
             val stored = database.emergencyRequestDao().getWithResponses(created.id)
             val pending = repository.observePendingEvents().first()
             val createEvent = pending.single()
@@ -49,11 +54,14 @@ class SisterMeshRepositoryTest {
             val device = database.deviceInfoDao().get()
 
             assertNotNull(stored)
-            assertEquals(RequestStatus.SEARCHING, created.status)
+            assertEquals(RequestStatus.PENDING_FACILITY_VERIFICATION, created.status)
             assertEquals("Community Clinic", stored?.request?.facility)
             assertEquals("O_NEGATIVE", payload.getString("requestedBloodGroup"))
             assertEquals("CRITICAL", payload.getString("urgency"))
             assertEquals(2, payload.getInt("units"))
+            assertEquals("facility-1", payload.getString("facilityId"))
+            assertFalse(payload.getBoolean("isForSelf"))
+            assertEquals("Patient A", payload.getString("beneficiaryName"))
             assertFalse(payload.has("note"))
             assertNull(createEvent.entityId)
             assertEquals(1, createEvent.payloadSchemaVersion)
@@ -88,11 +96,12 @@ class SisterMeshRepositoryTest {
                     role = Role.CHW,
                     name = "Worker",
                     facility = "Community Clinic",
+                    facilityId = "facility-1",
                     facilityLocation = "Riverside",
                     designation = "Midwife"
                 )
             )
-            val request = repository.createRequest("O-", Urgency.URGENT, 1, "")
+            val request = repository.createRequest("O-", Urgency.URGENT, 1, "facility-1", false, "Patient B", null, null)
             repository.confirmDonation(request.id, "ME")
 
             val blocked = repository.observeEventsForReview().first()
@@ -119,10 +128,23 @@ class SisterMeshRepositoryTest {
             repository.initialize()
             repository.registerProfile(
                 Profile(
-                    role = Role.DONOR,
+                    role = Role.INDIVIDUAL,
                     name = "Donor",
                     bloodGroup = "O-",
                     area = "Riverside"
+                )
+            )
+            database.emergencyRequestDao().upsert(
+                EmergencyRequestEntity(
+                    localId = "REQ-4821",
+                    kind = "INCOMING",
+                    bloodGroup = "O-",
+                    urgency = Urgency.URGENT.name,
+                    units = 1,
+                    facility = "Community Clinic",
+                    createdAt = "2026-11-07T12:00:00Z",
+                    status = RequestStatus.OPEN.name,
+                    receivedAt = "Just now"
                 )
             )
             val deviceId = database.deviceInfoDao().get()!!.clientDeviceId.toString()
@@ -167,11 +189,12 @@ class SisterMeshRepositoryTest {
                     role = Role.CHW,
                     name = "Persistent Worker",
                     facility = "North Clinic",
+                    facilityId = "facility-2",
                     facilityLocation = "North",
                     designation = "Nurse"
                 )
             )
-            val request = firstRepository.createRequest("A+", Urgency.URGENT, 1, "")
+            val request = firstRepository.createRequest("A+", Urgency.URGENT, 1, "facility-2", false, "Patient C", null, null)
             val eventId = firstRepository.observePendingEvents().first().single().eventId
             val deviceId = firstDatabase.deviceInfoDao().get()!!.clientDeviceId.toString()
             firstDatabase.close()
@@ -184,7 +207,7 @@ class SisterMeshRepositoryTest {
             assertEquals("A+", persistedRequest.bloodGroup)
             assertEquals(eventId, secondRepository.observePendingEvents().first().single().eventId)
             assertEquals(deviceId, reopened!!.deviceInfoDao().get()?.clientDeviceId?.toString())
-            assertEquals(3, reopened!!.openHelper.writableDatabase.version)
+            assertEquals(4, reopened!!.openHelper.writableDatabase.version)
             assertEquals(request.id, persistedRequest.id)
         } finally {
             if (reopened?.isOpen == true) reopened?.close()
@@ -278,6 +301,7 @@ class SisterMeshRepositoryTest {
         try {
             MIGRATION_1_2.migrate(migrated)
             MIGRATION_2_3.migrate(migrated)
+            MIGRATION_3_4.migrate(migrated)
             val profile = migrated.query("SELECT name FROM profiles WHERE id = 1")
             assertTrue(profile.moveToFirst())
             assertEquals("Legacy Worker", profile.getString(0))

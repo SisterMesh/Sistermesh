@@ -41,7 +41,7 @@ class AuthRepository(
         }
         try {
             val user = withAccessToken { api.getMe(it) }
-            if (user.role !in setOf("DONOR", "HEALTH_WORKER")) {
+            if (user.role !in setOf("INDIVIDUAL", "HEALTH_WORKER")) {
                 clearLocalSession()
                 return
             }
@@ -75,8 +75,33 @@ class AuthRepository(
         locality: String
     ): BackendUser = acceptSession(
         api.registerDonor(displayName, phoneNumber, password, bloodGroup, locality),
-        expectedRole = "DONOR"
+        expectedRole = "INDIVIDUAL"
     )
+
+    suspend fun registerIndividual(
+        displayName: String,
+        phoneNumber: String,
+        password: String
+    ): BackendUser = acceptSession(
+        api.registerIndividual(displayName, phoneNumber, password),
+        expectedRole = "INDIVIDUAL"
+    )
+
+    suspend fun createDonorProfile(bloodGroup: String, locality: String): BackendDonorProfile =
+        withAccessToken { api.createDonorProfile(it, bloodGroup, locality) }
+
+    suspend fun updateDonorProfile(
+        bloodGroup: String? = null,
+        locality: String? = null,
+        isAvailable: Boolean? = null
+    ): BackendDonorProfile = withAccessToken {
+        api.updateDonorProfile(it, bloodGroup, locality, isAvailable)
+    }
+
+    suspend fun listFacilities(): List<BackendFacility> = api.listFacilities()
+
+    suspend fun getMyDonations(): List<BackendDonorResponse> =
+        withAccessToken { api.getMyDonations(it) }
 
     suspend fun registerHealthWorker(
         displayName: String,
@@ -127,7 +152,7 @@ class AuthRepository(
 
     private suspend fun acceptSession(session: BackendSession, expectedRole: String): BackendUser {
         val user = session.user
-        if (user.role != expectedRole || user.role !in setOf("DONOR", "HEALTH_WORKER")) {
+        if (user.role != expectedRole || user.role !in setOf("INDIVIDUAL", "HEALTH_WORKER")) {
             runCatching { api.logout(session.refreshCookie) }
             throw AccountRoleMismatchException("This account does not match the role selected for this phone.")
         }

@@ -67,8 +67,8 @@ export class DonorsService {
       where: { id: userId },
       select: { id: true, role: true, status: true },
     });
-    if (!user || user.status !== AccountStatus.ACTIVE || user.role !== UserRole.DONOR) {
-      throw new ForbiddenException('An active donor account is required.');
+    if (!user || user.status !== AccountStatus.ACTIVE || user.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('An active individual account is required.');
     }
   }
 

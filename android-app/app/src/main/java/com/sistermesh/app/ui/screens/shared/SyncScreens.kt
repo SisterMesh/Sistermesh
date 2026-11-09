@@ -193,12 +193,12 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
                     Text("Sign in", color = if (!createAccount) Teal else Muted)
                 }
                 TextButton(onClick = { createAccount = true; vm.clearAccountFeedback() }) {
-                    Text("Create ${if (profile.role == Role.DONOR) "donor" else "health-worker"} account", color = if (createAccount) Teal else Muted)
+                    Text("Create ${if (profile.role == Role.INDIVIDUAL) "individual" else "health-worker"} account", color = if (createAccount) Teal else Muted)
                 }
             }
             SmCard {
                 Text(
-                    if (createAccount) "Account type: ${if (profile.role == Role.DONOR) "Donor" else "Health worker"}"
+                    if (createAccount) "Account type: ${if (profile.role == Role.INDIVIDUAL) "Individual" else "Health worker"}"
                     else "Sign in with the account matching this phone's local profile.",
                     style = MaterialTheme.typography.titleMedium
                 )

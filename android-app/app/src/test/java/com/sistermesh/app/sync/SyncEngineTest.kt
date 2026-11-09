@@ -186,7 +186,7 @@ class SyncEngineTest {
             assertEquals("CRITICAL", request?.urgency)
             assertEquals(2, request?.units)
             assertEquals("Keep this local note", request?.note)
-            assertEquals("SEARCHING", request?.status)
+            assertEquals("OPEN", request?.status)
             assertEquals("1", request?.lastServerCursor)
             assertEquals("Community Clinic, Central, Rivers", request?.facility)
             assertEquals("CONFLICT", request?.syncStatus)
@@ -259,7 +259,7 @@ class SyncEngineTest {
         val clientDeviceId = UUID.randomUUID()
         val user = BackendUser(
             id = "user-1",
-            role = "DONOR",
+            role = "INDIVIDUAL",
             status = "ACTIVE",
             displayName = "Donor",
             phoneNumber = "+2348012345678",
@@ -272,7 +272,7 @@ class SyncEngineTest {
         )
         database.profileDao().upsert(
             ProfileEntity(
-                role = "DONOR",
+                role = "INDIVIDUAL",
                 name = "Local donor",
                 bloodGroup = "O-",
                 area = "Central",
@@ -315,6 +315,11 @@ class SyncEngineTest {
         val uploadStatuses = ArrayDeque<String>()
 
         override suspend fun login(phoneNumber: String, password: String) = error("Not used.")
+        override suspend fun registerIndividual(
+            displayName: String,
+            phoneNumber: String,
+            password: String
+        ) = error("Not used.")
         override suspend fun registerDonor(
             displayName: String,
             phoneNumber: String,
@@ -322,6 +327,16 @@ class SyncEngineTest {
             bloodGroup: String,
             locality: String
         ) = error("Not used.")
+        override suspend fun listFacilities() = emptyList<BackendFacility>()
+        override suspend fun createDonorProfile(accessToken: String, bloodGroup: String, locality: String) =
+            BackendDonorProfile("donor-1", bloodGroup, locality, true, true)
+        override suspend fun updateDonorProfile(
+            accessToken: String,
+            bloodGroup: String?,
+            locality: String?,
+            isAvailable: Boolean?
+        ) = BackendDonorProfile("donor-1", bloodGroup, locality, isAvailable ?: true, true)
+        override suspend fun getMyDonations(accessToken: String) = emptyList<BackendDonorResponse>()
         override suspend fun registerHealthWorker(
             displayName: String,
             phoneNumber: String,

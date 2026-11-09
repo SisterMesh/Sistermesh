@@ -299,12 +299,19 @@ object MeshEventValidator {
         val payload = JSONObject(packet.payloadJson)
         when (packet.eventType) {
             "request.create" -> {
-                require(payload.keys().asSequence().all { it in setOf("requestedBloodGroup", "urgency", "units", "expiresAt") }) {
+                require(payload.keys().asSequence().all {
+                    it in setOf("requestedBloodGroup", "urgency", "units", "expiresAt", "publicationStatus")
+                }) {
                     "Unexpected request field."
                 }
                 require(payload.getString("requestedBloodGroup") in bloodGroups) { "Invalid requested blood group." }
                 require(payload.getString("urgency") in setOf("CRITICAL", "URGENT")) { "Invalid urgency." }
                 require(payload.getInt("units") in 1..6) { "Invalid requested units." }
+                if (payload.has("publicationStatus")) {
+                    require(payload.getString("publicationStatus") in setOf("OPEN", "PARTIALLY_FILLED")) {
+                        "Unverified requests cannot be shared with donors."
+                    }
+                }
                 require(packet.localEntityId?.length in 1..128) { "Missing originating request ID." }
             }
             "request.update" -> {

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.sistermesh.app.data.Profile
+import com.sistermesh.app.data.RequestStatus
 import com.sistermesh.app.data.Role
 import com.sistermesh.app.data.SisterMeshRepository
 import com.sistermesh.app.data.Urgency
@@ -38,15 +39,23 @@ class MeshRepositoryTest {
         var database = fileDatabase(databaseName)
         try {
             val appRepository = configuredWorker(database)
-            val request = appRepository.createRequest("O-", Urgency.CRITICAL, 2, "local note")
+            val request = appRepository.createRequest(
+                "O-", Urgency.CRITICAL, 2, "facility-1", false, "Patient name", "Sibling", "Local-only note"
+            )
             val event = appRepository.observeAllEvents().first().single { it.eventType == "request.create" }
             val meshRepository = MeshRepository(database, TestMeshSigner())
+            meshRepository.ensureOutgoing(event)
+            assertNull(database.meshMessageDao().get(event.eventId))
+            val local = database.emergencyRequestDao().get(request.id)!!
+            database.emergencyRequestDao().upsert(local.copy(status = RequestStatus.OPEN.name))
             meshRepository.ensureOutgoing(event)
 
             val queued = database.meshMessageDao().get(event.eventId)
             assertNotNull(queued)
             assertEquals("CREATED", queued?.deliveryState)
-            assertFalse(queued?.payloadJson.orEmpty().contains("local note"))
+            assertFalse(queued?.payloadJson.orEmpty().contains("Local-only note"))
+            assertFalse(queued?.payloadJson.orEmpty().contains("Patient name"))
+            assertEquals("OPEN", org.json.JSONObject(queued?.payloadJson.orEmpty()).getString("publicationStatus"))
             assertEquals(request.id, queued?.localEntityId)
             database.close()
 
@@ -55,7 +64,7 @@ class MeshRepositoryTest {
             assertNotNull(afterReopen)
             assertEquals("CREATED", afterReopen?.deliveryState)
             assertEquals(event.originDeviceId, afterReopen?.originDeviceId)
-            assertEquals(event.payloadJson, afterReopen?.payloadJson)
+            assertEquals(queued?.payloadJson, afterReopen?.payloadJson)
         } finally {
             if (database.isOpen) database.close()
             context.deleteDatabase(databaseName)
@@ -68,7 +77,10 @@ class MeshRepositoryTest {
         val relayDb = inMemoryDatabase()
         try {
             val sourceApp = configuredWorker(sourceDb)
-            sourceApp.createRequest("O-", Urgency.URGENT, 1, "must stay local")
+            val request = sourceApp.createRequest("O-", Urgency.URGENT, 1, "facility-1", false, "Patient X", null, "must stay local")
+            sourceDb.emergencyRequestDao().get(request.id)?.let {
+                sourceDb.emergencyRequestDao().upsert(it.copy(status = RequestStatus.OPEN.name))
+            }
             SisterMeshRepository(relayDb).initialize()
             val event = sourceApp.observeAllEvents().first().single { it.eventType == "request.create" }
             val sourceSigner = TestMeshSigner()
@@ -137,7 +149,12 @@ class MeshRepositoryTest {
                 val appRepositories = databases.mapIndexed { index, database ->
                     if (index == 0) configuredWorker(database) else SisterMeshRepository(database).also { it.initialize() }
                 }
-                appRepositories.first().createRequest("AB+", Urgency.CRITICAL, 3, "private note")
+                val request = appRepositories.first().createRequest(
+                    "AB+", Urgency.CRITICAL, 3, "facility-1", false, "Private patient", null, "private note"
+                )
+                databases.first().emergencyRequestDao().get(request.id)?.let {
+                    databases.first().emergencyRequestDao().upsert(it.copy(status = RequestStatus.OPEN.name))
+                }
                 val event = appRepositories.first().observeAllEvents().first().single { it.eventType == "request.create" }
                 val signers = (0 until deviceCount).map { TestMeshSigner() }
                 val meshRepositories = databases.mapIndexed { index, database ->
