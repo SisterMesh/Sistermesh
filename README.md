@@ -9,24 +9,28 @@ The Phase 4 offline synchronization contract is documented in
 
 ## Configuration
 
-Set `DATABASE_URL` in Replit Secrets to the existing Neon PostgreSQL database.
-Do not put the real connection string in source control. `PORT` is optional and
-defaults to `5000`.
+The Replit development workflow sets `DATABASE_URL` from the
+`SISTERMESH_DEV_DATABASE_URL` secret. Keep production credentials in the separate
+`DATABASE_URL` deployment secret; do not paste or commit either connection
+string. `PORT` is optional and defaults to `5000`.
 
 ## Run
 
 ```sh
 npm run prisma:generate
-npm run start:dev
 ```
 
+Start the configured **SisterMesh Backend** development workflow to run
+`DATABASE_URL="$SISTERMESH_DEV_DATABASE_URL" npm run start:dev`.
 The API is served under `/api`; Swagger UI is at `/api/docs`, and the public
 health check is `GET /api/health`.
 
 ## Authentication and profiles
 
-- Donors register at `POST /api/auth/register/donor`; health workers register
-  at `POST /api/auth/register/health-worker`.
+- Individuals register at `POST /api/auth/register/donor`; this legacy route
+  creates an `INDIVIDUAL` account. A donor profile is optional and is managed
+  separately at `/api/donors/me`. Health workers register at
+  `POST /api/auth/register/health-worker`.
 - `POST /api/auth/login` returns a short-lived access token. A rotating refresh
   token is stored in an HttpOnly, Secure cookie and is never returned in JSON.
 - `POST /api/auth/refresh` rotates that cookie; `POST /api/auth/logout` revokes
@@ -51,11 +55,13 @@ health check is `GET /api/health`.
 
 ## Coordination endpoints
 
-- Health workers create and manage facility requests under
-  `/api/emergency-requests`, including status, cancellation, and activity
-  history.
-- Donors view compatible active requests at `GET
-  /api/emergency-requests/eligible`, submit one response per request at
+- Individuals and verified health workers create requests under
+  `/api/emergency-requests`. New requests remain private in
+  `PENDING_FACILITY_VERIFICATION` until a verified worker for the associated
+  active facility approves them.
+- Individuals with a complete, available donor profile view compatible,
+  approved requests at `GET
+/api/emergency-requests/eligible`, submit one response per request at
   `POST /api/donor-responses/:requestId`, and list responses at
   `GET /api/donor-responses/mine`.
 - Health workers confirm a donation at
@@ -83,13 +89,13 @@ least 32 bytes. The API derives separate access-token and refresh-token signing
 keys from it. Access tokens last 15 minutes; refresh tokens are rotated, stored
 only as hashes, and sent only in an HTTP-only cookie.
 
-Public registration accepts only `DONOR` or `HEALTH_WORKER`; it cannot create
-administrators. To bootstrap the first administrator, first register an active
-donor or health-worker account and verify that person through your controlled
-process, then run `npm run admin:promote` from an authorised Replit shell and
-confirm the exact account. Later role changes
-are restricted to authenticated administrator endpoints. Never run the
-bootstrap command in an untrusted shell.
+Public registration accepts only `INDIVIDUAL` or `HEALTH_WORKER`; it cannot
+create administrators. The donor-registration route creates the `INDIVIDUAL`
+role. To bootstrap an administrator, an authorised operator must verify the
+person through the controlled process, then run `npm run admin:promote` from a
+trusted Replit shell and confirm the exact account. Later role changes are
+restricted to authenticated administrator endpoints. Never run the bootstrap
+command in an untrusted shell.
 
 Facilities are created by administrators in `PENDING` status and require an
 administrator status change before they become available. Health workers begin
@@ -103,6 +109,9 @@ npm test
 npm run test:e2e
 npm run test:db
 npm run build
+npm run prisma:validate
 ```
 
-The database connectivity and migration checks require `DATABASE_URL`.
+`test:db` creates and removes uniquely identified integration fixtures; run it
+only with the development workflow's `SISTERMESH_DEV_DATABASE_URL`. It does not
+reset the database. Prisma schema validation does not apply migrations.

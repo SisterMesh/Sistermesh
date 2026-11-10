@@ -19,11 +19,12 @@ import com.sistermesh.app.sync.BackendHttpException
 import com.sistermesh.app.sync.ConnectivityStatus
 import com.sistermesh.app.sync.SyncEngine
 import com.sistermesh.app.sync.SyncWorkScheduler
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
  * Compose-facing state holder. Room-backed repositories are the source of truth;
- * the discovery and incoming-request simulators remain demo-only.
+ * sample data and the explicitly labelled facility-confirmation action are demo-only.
  */
 class AppViewModel(
     private val repository: SisterMeshRepository,
@@ -144,7 +145,11 @@ class AppViewModel(
                 }
             }
             launch {
-                repository.observeAllEvents().collect { events ->
+                combine(
+                    repository.observeAllEvents(),
+                    repository.observeRequests(),
+                    repository.observeFacilityRequests()
+                ) { events, _, _ -> events }.collect { events ->
                     events.forEach { nearbyManager.enqueue(it) }
                 }
             }

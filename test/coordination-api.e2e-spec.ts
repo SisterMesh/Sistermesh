@@ -1,23 +1,23 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import { UserRole } from '@prisma/client';
-import request from 'supertest';
-import { AuthenticatedUser } from '../src/common/authenticated-user';
-import { RolesGuard } from '../src/common/roles.guard';
-import { AuthModule } from '../src/modules/auth/auth.module';
-import { AccessTokenService } from '../src/modules/auth/access-token.service';
-import { DonationConfirmationsController } from '../src/modules/donation-confirmations/donation-confirmations.controller';
-import { DonationConfirmationsService } from '../src/modules/donation-confirmations/donation-confirmations.service';
-import { DonorResponsesController } from '../src/modules/donor-responses/donor-responses.controller';
-import { DonorResponsesService } from '../src/modules/donor-responses/donor-responses.service';
-import { EmergencyRequestsController } from '../src/modules/emergency-requests/emergency-requests.controller';
-import { EmergencyRequestsService } from '../src/modules/emergency-requests/emergency-requests.service';
-import { OfflineSyncController } from '../src/modules/offline-sync/offline-sync.controller';
-import { OfflineSyncService } from '../src/modules/offline-sync/offline-sync.service';
-import { PrismaModule } from '../src/modules/prisma/prisma.module';
-import { PrismaService } from '../src/modules/prisma/prisma.service';
+import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { Test } from "@nestjs/testing";
+import { UserRole } from "@prisma/client";
+import request from "supertest";
+import { AuthenticatedUser } from "../src/common/authenticated-user";
+import { RolesGuard } from "../src/common/roles.guard";
+import { AuthModule } from "../src/modules/auth/auth.module";
+import { AccessTokenService } from "../src/modules/auth/access-token.service";
+import { DonationConfirmationsController } from "../src/modules/donation-confirmations/donation-confirmations.controller";
+import { DonationConfirmationsService } from "../src/modules/donation-confirmations/donation-confirmations.service";
+import { DonorResponsesController } from "../src/modules/donor-responses/donor-responses.controller";
+import { DonorResponsesService } from "../src/modules/donor-responses/donor-responses.service";
+import { EmergencyRequestsController } from "../src/modules/emergency-requests/emergency-requests.controller";
+import { EmergencyRequestsService } from "../src/modules/emergency-requests/emergency-requests.service";
+import { OfflineSyncController } from "../src/modules/offline-sync/offline-sync.controller";
+import { OfflineSyncService } from "../src/modules/offline-sync/offline-sync.service";
+import { PrismaModule } from "../src/modules/prisma/prisma.module";
+import { PrismaService } from "../src/modules/prisma/prisma.service";
 
-describe('coordination API with verified JWT authentication', () => {
+describe("coordination API with verified JWT authentication", () => {
   let app: INestApplication;
   let accessTokens: AccessTokenService;
   const originalSessionSecret = process.env.SESSION_SECRET;
@@ -27,7 +27,9 @@ describe('coordination API with verified JWT authentication', () => {
       findUnique: jest.fn(),
     },
     healthWorkerProfile: {
-      findUnique: jest.fn().mockResolvedValue({ verificationStatus: 'VERIFIED' }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ verificationStatus: "VERIFIED" }),
     },
   };
   const emergencyRequests = {
@@ -38,7 +40,12 @@ describe('coordination API with verified JWT authentication', () => {
     cancel: jest.fn(),
     updateStatus: jest.fn(),
   };
-  const donorResponses = { respond: jest.fn(), listMine: jest.fn(), withdraw: jest.fn(), listForRequest: jest.fn() };
+  const donorResponses = {
+    respond: jest.fn(),
+    listMine: jest.fn(),
+    withdraw: jest.fn(),
+    listForRequest: jest.fn(),
+  };
   const donationConfirmations = { confirm: jest.fn() };
   const offlineSync = {
     registerDevice: jest.fn(),
@@ -51,9 +58,11 @@ describe('coordination API with verified JWT authentication', () => {
   };
 
   beforeAll(async () => {
-    process.env.SESSION_SECRET = 'test-only-session-secret-with-more-than-32-bytes';
+    process.env.SESSION_SECRET =
+      "test-only-session-secret-with-more-than-32-bytes";
     prismaMock.user.findUnique.mockImplementation(
-      async (args: { where: { id: string } }) => actors.get(args.where.id) ?? null,
+      async (args: { where: { id: string } }) =>
+        actors.get(args.where.id) ?? null,
     );
     const module = await Test.createTestingModule({
       imports: [PrismaModule, AuthModule],
@@ -67,7 +76,10 @@ describe('coordination API with verified JWT authentication', () => {
         RolesGuard,
         { provide: EmergencyRequestsService, useValue: emergencyRequests },
         { provide: DonorResponsesService, useValue: donorResponses },
-        { provide: DonationConfirmationsService, useValue: donationConfirmations },
+        {
+          provide: DonationConfirmationsService,
+          useValue: donationConfirmations,
+        },
         { provide: OfflineSyncService, useValue: offlineSync },
       ],
     })
@@ -75,8 +87,14 @@ describe('coordination API with verified JWT authentication', () => {
       .useValue(prismaMock)
       .compile();
     app = module.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    app.setGlobalPrefix("api");
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
     accessTokens = module.get<AccessTokenService>(AccessTokenService);
   });
@@ -85,9 +103,12 @@ describe('coordination API with verified JWT authentication', () => {
     jest.clearAllMocks();
     actors.clear();
     prismaMock.user.findUnique.mockImplementation(
-      async (args: { where: { id: string } }) => actors.get(args.where.id) ?? null,
+      async (args: { where: { id: string } }) =>
+        actors.get(args.where.id) ?? null,
     );
-    prismaMock.healthWorkerProfile.findUnique.mockResolvedValue({ verificationStatus: 'VERIFIED' });
+    prismaMock.healthWorkerProfile.findUnique.mockResolvedValue({
+      verificationStatus: "VERIFIED",
+    });
   });
 
   afterAll(async () => {
@@ -96,61 +117,70 @@ describe('coordination API with verified JWT authentication', () => {
     else process.env.SESSION_SECRET = originalSessionSecret;
   });
 
-  async function bearer(role: UserRole, status: AuthenticatedUser['status'] = 'ACTIVE') {
+  async function bearer(
+    role: UserRole,
+    status: AuthenticatedUser["status"] = "ACTIVE",
+  ) {
     const id =
       role === UserRole.INDIVIDUAL
-        ? '00000000-0000-4000-8000-000000000002'
+        ? "00000000-0000-4000-8000-000000000002"
         : role === UserRole.HEALTH_WORKER
-          ? '00000000-0000-4000-8000-000000000001'
-          : '00000000-0000-4000-8000-000000000003';
+          ? "00000000-0000-4000-8000-000000000001"
+          : "00000000-0000-4000-8000-000000000003";
     actors.set(id, { id, role, status });
     return `Bearer ${await accessTokens.issue(id)}`;
   }
 
-  it('rejects missing or invalid tokens, wrong roles, and invalid request data', async () => {
+  it("rejects missing or invalid tokens, wrong roles, and invalid request data", async () => {
     const body = {
-      clientRequestId: '00000000-0000-4000-8000-000000000011',
-      requestedBloodGroup: 'O_NEGATIVE',
-      urgency: 'CRITICAL',
+      clientRequestId: "00000000-0000-4000-8000-000000000011",
+      requestedBloodGroup: "O_NEGATIVE",
+      urgency: "CRITICAL",
       units: 2,
     };
-    await request(app.getHttpServer()).post('/api/emergency-requests').send(body).expect(401);
     await request(app.getHttpServer())
-      .post('/api/emergency-requests')
-      .set('Authorization', 'Bearer not-a-jwt')
+      .post("/api/emergency-requests")
       .send(body)
       .expect(401);
     await request(app.getHttpServer())
-      .post('/api/emergency-requests')
-      .set('Authorization', await bearer(UserRole.ADMIN))
+      .post("/api/emergency-requests")
+      .set("Authorization", "Bearer not-a-jwt")
+      .send(body)
+      .expect(401);
+    await request(app.getHttpServer())
+      .post("/api/emergency-requests")
+      .set("Authorization", await bearer(UserRole.ADMIN))
       .send(body)
       .expect(403);
     await request(app.getHttpServer())
-      .post('/api/emergency-requests')
-      .set('Authorization', await bearer(UserRole.HEALTH_WORKER, 'SUSPENDED'))
+      .post("/api/emergency-requests")
+      .set("Authorization", await bearer(UserRole.HEALTH_WORKER, "SUSPENDED"))
       .send(body)
       .expect(401);
     await request(app.getHttpServer())
-      .post('/api/emergency-requests')
-      .set('Authorization', await bearer(UserRole.HEALTH_WORKER))
+      .post("/api/emergency-requests")
+      .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
       .send({ ...body, units: 0 })
       .expect(400);
   });
 
-  it('accepts a signed-in worker request using the database role, not client headers', async () => {
-    const created = { id: '00000000-0000-4000-8000-000000000010', status: 'OPEN' };
+  it("accepts a signed-in worker request using the database role, not client headers", async () => {
+    const created = {
+      id: "00000000-0000-4000-8000-000000000010",
+      status: "OPEN",
+    };
     const body = {
-      clientRequestId: '00000000-0000-4000-8000-000000000011',
-      requestedBloodGroup: 'O_NEGATIVE',
-      urgency: 'CRITICAL',
+      clientRequestId: "00000000-0000-4000-8000-000000000011",
+      requestedBloodGroup: "O_NEGATIVE",
+      urgency: "CRITICAL",
       units: 2,
     };
     emergencyRequests.create.mockResolvedValue(created);
 
     await request(app.getHttpServer())
-      .post('/api/emergency-requests')
-      .set('Authorization', await bearer(UserRole.HEALTH_WORKER))
-      .set('x-test-role', UserRole.ADMIN)
+      .post("/api/emergency-requests")
+      .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
+      .set("x-test-role", UserRole.ADMIN)
       .send(body)
       .expect(201, created);
 
@@ -160,118 +190,129 @@ describe('coordination API with verified JWT authentication', () => {
     );
   });
 
-  it('lists compatible requests and accepts a donor response under the donor token', async () => {
-    const eligible = [{ id: 'request-1', requestedBloodGroup: 'O_NEGATIVE' }];
-    const response = { id: 'response-1', status: 'ACCEPTED' };
+  it("lists compatible requests and accepts a donor response under the donor token", async () => {
+    const eligible = [{ id: "request-1", requestedBloodGroup: "O_NEGATIVE" }];
+    const response = { id: "response-1", status: "ACCEPTED" };
     emergencyRequests.listEligible.mockResolvedValue(eligible);
     donorResponses.respond.mockResolvedValue(response);
 
     await request(app.getHttpServer())
-      .get('/api/emergency-requests/eligible')
-      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
+      .get("/api/emergency-requests/eligible")
+      .set("Authorization", await bearer(UserRole.INDIVIDUAL))
       .expect(200, eligible);
     await request(app.getHttpServer())
-      .post('/api/donor-responses/00000000-0000-4000-8000-000000000010')
-      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
+      .post("/api/donor-responses/00000000-0000-4000-8000-000000000010")
+      .set("Authorization", await bearer(UserRole.INDIVIDUAL))
       .send({
-        idempotencyKey: '00000000-0000-4000-8000-000000000012',
-        status: 'ACCEPTED',
+        idempotencyKey: "00000000-0000-4000-8000-000000000012",
+        status: "ACCEPTED",
       })
       .expect(201, response);
 
     expect(donorResponses.respond).toHaveBeenCalledWith(
       expect.objectContaining({ role: UserRole.INDIVIDUAL }),
-      '00000000-0000-4000-8000-000000000010',
-      { idempotencyKey: '00000000-0000-4000-8000-000000000012', status: 'ACCEPTED' },
+      "00000000-0000-4000-8000-000000000010",
+      {
+        idempotencyKey: "00000000-0000-4000-8000-000000000012",
+        status: "ACCEPTED",
+      },
     );
   });
 
-  it('confirms a donation only through a health worker bearer token', async () => {
-    const confirmation = { id: 'confirmation-1' };
+  it("confirms a donation only through a health worker bearer token", async () => {
+    const confirmation = { id: "confirmation-1" };
     donationConfirmations.confirm.mockResolvedValue(confirmation);
     const body = {
-      idempotencyKey: '00000000-0000-4000-8000-000000000013',
-      donorProfileId: '00000000-0000-4000-8000-000000000014',
-      receiptHash: 'a'.repeat(64),
+      idempotencyKey: "00000000-0000-4000-8000-000000000013",
+      donorProfileId: "00000000-0000-4000-8000-000000000014",
+      receiptHash: "a".repeat(64),
     };
 
     await request(app.getHttpServer())
-      .post('/api/emergency-requests/00000000-0000-4000-8000-000000000010/donations/confirm')
-      .set('Authorization', await bearer(UserRole.HEALTH_WORKER))
+      .post(
+        "/api/emergency-requests/00000000-0000-4000-8000-000000000010/donations/confirm",
+      )
+      .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
       .send(body)
       .expect(201, confirmation);
 
     expect(donationConfirmations.confirm).toHaveBeenCalledWith(
       expect.objectContaining({ role: UserRole.HEALTH_WORKER }),
-      '00000000-0000-4000-8000-000000000010',
+      "00000000-0000-4000-8000-000000000010",
       body,
     );
   });
 
-  it('restricts facility response lists to health workers and supports donor withdrawal retries', async () => {
-    const requestId = '00000000-0000-4000-8000-000000000020';
-    const rows = [{ id: 'response-1', status: 'ACCEPTED' }];
-    const withdrawn = { id: 'response-1', status: 'WITHDRAWN' };
+  it("restricts facility response lists to health workers and supports donor withdrawal retries", async () => {
+    const requestId = "00000000-0000-4000-8000-000000000020";
+    const rows = [{ id: "response-1", status: "ACCEPTED" }];
+    const withdrawn = { id: "response-1", status: "WITHDRAWN" };
     donorResponses.listForRequest.mockResolvedValue(rows);
     donorResponses.withdraw.mockResolvedValue(withdrawn);
 
     await request(app.getHttpServer())
       .get(`/api/donor-responses/requests/${requestId}`)
-      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
+      .set("Authorization", await bearer(UserRole.INDIVIDUAL))
       .expect(403);
     await request(app.getHttpServer())
       .get(`/api/donor-responses/requests/${requestId}`)
-      .set('Authorization', await bearer(UserRole.HEALTH_WORKER))
+      .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
       .expect(200, rows);
     await request(app.getHttpServer())
       .post(`/api/donor-responses/${requestId}/withdraw`)
-      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
-      .send({ idempotencyKey: '00000000-0000-4000-8000-000000000021' })
+      .set("Authorization", await bearer(UserRole.INDIVIDUAL))
+      .send({ idempotencyKey: "00000000-0000-4000-8000-000000000021" })
       .expect(201, withdrawn);
 
     expect(donorResponses.listForRequest).toHaveBeenCalled();
     expect(donorResponses.withdraw).toHaveBeenCalledWith(
       expect.objectContaining({ role: UserRole.INDIVIDUAL }),
       requestId,
-      { idempotencyKey: '00000000-0000-4000-8000-000000000021' },
+      { idempotencyKey: "00000000-0000-4000-8000-000000000021" },
     );
   });
 
-  it('protects sync routes with JWT roles and never accepts a client-supplied identity', async () => {
-    const device = { deviceId: '00000000-0000-4000-8000-000000000031' };
+  it("protects sync routes with JWT roles and never accepts a client-supplied identity", async () => {
+    const device = { deviceId: "00000000-0000-4000-8000-000000000031" };
     offlineSync.registerDevice.mockResolvedValue(device);
-    offlineSync.uploadBatch.mockResolvedValue({ status: 'COMPLETED', events: [] });
+    offlineSync.uploadBatch.mockResolvedValue({
+      status: "COMPLETED",
+      events: [],
+    });
     const token = await bearer(UserRole.HEALTH_WORKER);
 
     await request(app.getHttpServer())
-      .post('/api/sync/devices')
-      .set('Authorization', token)
-      .send({ clientDeviceId: '00000000-0000-4000-8000-000000000032', userId: 'forged' })
+      .post("/api/sync/devices")
+      .set("Authorization", token)
+      .send({
+        clientDeviceId: "00000000-0000-4000-8000-000000000032",
+        userId: "forged",
+      })
       .expect(400);
     await request(app.getHttpServer())
-      .post('/api/sync/devices')
-      .set('Authorization', token)
-      .send({ clientDeviceId: '00000000-0000-4000-8000-000000000032' })
+      .post("/api/sync/devices")
+      .set("Authorization", token)
+      .send({ clientDeviceId: "00000000-0000-4000-8000-000000000032" })
       .expect(201, device);
 
     const batch = {
-      clientBatchId: '00000000-0000-4000-8000-000000000033',
+      clientBatchId: "00000000-0000-4000-8000-000000000033",
       events: [],
     };
     await request(app.getHttpServer())
       .post(`/api/sync/devices/${device.deviceId}/batches`)
-      .set('Authorization', await bearer(UserRole.ADMIN))
+      .set("Authorization", await bearer(UserRole.ADMIN))
       .send(batch)
       .expect(403);
     await request(app.getHttpServer())
       .post(`/api/sync/devices/${device.deviceId}/batches`)
-      .set('Authorization', token)
+      .set("Authorization", token)
       .send(batch)
       .expect(400);
     expect(offlineSync.registerDevice).toHaveBeenCalledTimes(1);
     expect(offlineSync.registerDevice).toHaveBeenCalledWith(
       expect.objectContaining({ role: UserRole.HEALTH_WORKER }),
-      { clientDeviceId: '00000000-0000-4000-8000-000000000032' },
+      { clientDeviceId: "00000000-0000-4000-8000-000000000032" },
     );
     expect(offlineSync.uploadBatch).not.toHaveBeenCalled();
   });

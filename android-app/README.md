@@ -1,21 +1,29 @@
 # SisterMesh (Android, Kotlin + Jetpack Compose)
 
-SisterMesh's existing 17-screen Kotlin + Jetpack Compose Android app. Room now stores the local profile,
-requests, donor responses, donation confirmations, request activity, device identity, sync checkpoint,
-and a durable Phase 4-compatible event queue. Existing screens and demo flows remain in place.
-
-This phase is offline persistence only. It does not connect to the backend, start automatic sync, use
-WorkManager, or add Bluetooth/Nearby Connections.
+SisterMesh's Kotlin + Jetpack Compose Android app. Room is the local source of
+truth for profiles, requests, responses, donation confirmations, activity,
+device identity, sync checkpoints, conflicts, and the durable event queue.
+Explicit account linking associates eligible local events with a backend
+account; WorkManager retries synchronization when network access is available.
+Nearby Connections supports foreground Bluetooth/Wi-Fi Direct exchange, and
+voice entry uses Android's on-device recognition where the device provides it.
 
 ## Open and run
+
 1. Open this folder in Android Studio (Ladybug or newer, JDK 17).
 2. Let Gradle sync.
 3. Run on an emulator or device (minSdk 26).
 
 The project uses JDK 17, Gradle 8.9, and Android Gradle Plugin 8.6.1.
-Run JVM/Room tests with `./gradlew :app:testDebugUnitTest`.
+Run JVM and Room migration tests with
+`./gradlew :app:testDebugUnitTest`; build the debug APK with
+`./gradlew :app:assembleDebug`.
+Set `SISTERMESH_API_BASE_URL` to the reachable backend base ending in `/api/`
+when building outside Replit. In Replit, the build falls back to
+`REPLIT_DEV_DOMAIN`.
 
 ## Structure
+
 ```
 app/src/main/java/com/sistermesh/app/
   MainActivity.kt
@@ -25,6 +33,9 @@ app/src/main/java/com/sistermesh/app/
   data/AppViewModel.kt            Compose state collected from the Room repository
   data/SisterMeshRepository.kt    Room-backed reads, writes, and offline event creation
   data/local/                     Room entities, DAOs, mappings, and schema
+  sync/                           authentication, API, sync engine, WorkManager
+  communication/                  Nearby Connections and signed mesh messages
+  voice/                          offline-only text-to-speech support
   ui/theme/                       Color, Type, Theme
   ui/components/Components.kt     buttons, cards, tags, inputs, tab bar, logo, pulse
   ui/screens/onboarding/          S01 to S06
@@ -33,33 +44,38 @@ app/src/main/java/com/sistermesh/app/
   ui/screens/shared/              S13, S15, S16, S17, voice sheet
 ```
 
-## Demo script (single device)
-Donor: register, enable permissions, open the incoming request, tap "I can help", send a quick message,
-then "Demo: facility confirms my donation" to see the consent receipt.
-CHW: reset the profile, register as a healthcare worker, tap Find a Sister, pick a blood group, broadcast.
-The discovery screen simulates devices found, delivery, an acceptance and a decline.
-Open responses, coordinate, record the donation and view the receipt (real SHA-256 hash).
+## Demonstration
+
+See [the hackathon demo guide](../docs/hackathon-demo-guide.md) for the
+requester, verified-worker, donor, Bluetooth, reconnect/sync, and voice sequence.
+The explicitly labelled facility-confirmation demo action is local simulation;
+it does not confirm a real donation or replace the health-worker confirmation
+workflow.
 
 ## Offline behavior and sync boundary
-- Local profile, availability, language, requests, responses, confirmations, and activity survive app restarts.
-- Mock records are seeded once. Resetting the demo profile removes those sample records but preserves queued events.
-- Supported user actions create durable v1 event records with UUIDs, device identity, timestamps, payloads,
-  status, retry metadata, and server-result fields. Notes stay local and are not included in sync payloads.
-- The device identifier uses a Room UUID type converter; enum-like states are stored as explicit contract strings.
-- Actions that need a server request ID or verified donor profile remain `BLOCKED` with a reason; failed or
-  blocked events are not deleted.
-- The exported Room schema is version 1. There was no previous Room database in the app to migrate; no
-  destructive migration fallback is configured. Future schema versions must include explicit migrations
-  and migration tests.
+
+- Room schema version 5 uses explicit, non-destructive migrations; v4-to-v5 is
+  covered by a migration test. Local records and unresolved edits are retained
+  when an account is linked or synchronization fails.
+- New actions create durable, idempotent events. Synchronization requires a
+  signed-in account explicitly linked to the local profile and device. Network
+  constraints and retries are managed by WorkManager; conflicts are shown
+  without silently overwriting local values.
+- Requests stay private until facility approval. The mesh allow-list includes
+  only public request fields, and only locally approved open requests can be
+  relayed. Beneficiary details, phone numbers, and personal notes are excluded.
+- Nearby connections pause when the app leaves the foreground. Both phones
+  must show matching authentication digits and the user must approve the
+  connection.
 
 ## Voice
+
 - The request form and home/profile voice entry points use Android's on-device speech recognition on supported Android 12+ devices. Audio never falls back to a remote recognizer.
 - Transcripts are editable and explicitly confirmed before conservative field prefill; the existing request form still requires a separate final submit.
 - Text-to-speech uses installed offline English voices only. The OS/provider manages recognition and speech models.
 - Device and language availability limitations, model comparisons, licensing notes, and unverified hardware checks are documented in `OFFLINE_VOICE.md`.
 
-## Not implemented in this phase
-- Backend or automatic synchronization; the event queue is local only.
-- Nearby Connections in place of `startDiscovery`
-- Real runtime permissions in PermissionsScreen
-- Polygon Amoy anchoring for Receipt.hash
+Bluetooth transfer, offline speech recognition, TTS availability, and real
+account workflows still require testing on physical devices with configured
+demo accounts. The debug build and JVM/Room tests do not establish hardware
+behavior.

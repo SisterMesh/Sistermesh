@@ -99,7 +99,7 @@ fun CreateRequestScreen(vm: AppViewModel, nav: NavController) {
     var tried by remember { mutableStateOf(false) }
 
     Page(footer = {
-        SmButton("Broadcast request", {
+        SmButton("Submit for facility review", {
             tried = true
             if (group.isNotBlank()) {
                 vm.createRequest(group, urgency, units, note.trim()) { id ->
@@ -147,7 +147,11 @@ fun CreateRequestScreen(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(20.dp))
         SmField("Short note (optional)", note, { note = it.take(80) }, singleLine = false)
         Spacer(Modifier.height(8.dp))
-        Notice("Never add the patient's name or medical details. Only the blood group, facility and urgency are broadcast.", Icons.Rounded.Lock, Tone.Good)
+        Notice(
+            "This request stays private until facility approval. Nearby donor broadcasts include only the blood group, urgency, units and facility.",
+            Icons.Rounded.Lock,
+            Tone.Good
+        )
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -160,7 +164,14 @@ fun BroadcastScreen(vm: AppViewModel, nav: NavController, id: String) {
     if (r == null) { Page { Spacer(Modifier.height(24.dp)); Text("This request is no longer available.") }; return }
 
     val deliveryState = vm.meshState.requestDeliveryStates[id]
-    val deliveryText = vm.meshState.lastError ?: when (deliveryState) {
+    val deliveryText = when (r.status) {
+        RequestStatus.PENDING_FACILITY_VERIFICATION ->
+            "This request is private and will not be shared with donors until a verified facility worker approves it."
+        RequestStatus.NEEDS_INFORMATION ->
+            "The facility requested more information. Update the request before it can be reviewed again."
+        RequestStatus.REJECTED ->
+            "The facility did not approve this request. It has not been shared with donors."
+        else -> vm.meshState.lastError ?: when (deliveryState) {
         "TRANSMITTED" -> "Nearby transport accepted the send. A peer receipt has not been confirmed yet."
         "STORED_BY_PEER" -> "A nearby peer confirmed it stored this message. That does not confirm delivery to the intended recipient."
         "RELAYED" -> "A nearby peer relayed this message. Destination delivery is not confirmed."
@@ -168,22 +179,41 @@ fun BroadcastScreen(vm: AppViewModel, nav: NavController, id: String) {
         "EXPIRED" -> "This nearby message expired before delivery was confirmed."
         "FAILED", "REJECTED" -> "This nearby message could not be sent."
         else -> "The request is saved on this phone and will send when a trusted nearby connection is available."
+        }
     }
-    val (title, sub) = when {
-        r.status == RequestStatus.CANCELLED -> "Request cancelled" to "No further devices will receive it."
-        r.accepted > 0 -> "A sister said yes." to "Open the responses to coordinate."
-        r.responses.isNotEmpty() -> "Waiting for a response." to "A nearby donor has responded."
-        vm.meshState.connectedDeviceIds.isNotEmpty() -> "Connected to nearby phones." to "Waiting for a donor response."
-        vm.meshState.scanning -> "Looking for sisters nearby." to "Searching for SisterMesh devices."
-        else -> "Nearby connection paused." to vm.meshState.statusText
+    val (title, sub) = when (r.status) {
+        RequestStatus.PENDING_FACILITY_VERIFICATION ->
+            "Waiting for facility review" to "Donors cannot see this request until the facility approves it."
+        RequestStatus.NEEDS_INFORMATION ->
+            "More information needed" to "Review the facility's feedback and update the request."
+        RequestStatus.REJECTED ->
+            "Request not approved" to "The request remains private and is not available to donors."
+        RequestStatus.CANCELLED ->
+            "Request cancelled" to "No further devices will receive it."
+        RequestStatus.EXPIRED ->
+            "Request expired" to "This request is no longer available to donors."
+        RequestStatus.FULFILLED, RequestStatus.COMPLETED ->
+            "Request fulfilled" to "The required donations have been confirmed."
+        else -> when {
+            r.accepted > 0 -> "A sister said yes." to "Open the responses to coordinate."
+            r.responses.isNotEmpty() -> "Waiting for a response." to "A nearby donor has responded."
+            vm.meshState.connectedDeviceIds.isNotEmpty() -> "Connected to nearby phones." to "Waiting for a donor response."
+            vm.meshState.scanning -> "Looking for sisters nearby." to "Searching for SisterMesh devices."
+            else -> "Nearby connection paused." to vm.meshState.statusText
+        }
     }
-    val live = r.status == RequestStatus.SEARCHING || r.status == RequestStatus.WAITING
+    val live = r.status in setOf(
+        RequestStatus.OPEN,
+        RequestStatus.PARTIALLY_FILLED,
+        RequestStatus.SEARCHING,
+        RequestStatus.WAITING
+    )
 
     Page(footer = {
         if (r.responses.isNotEmpty() && r.status != RequestStatus.CANCELLED) {
             SmButton("View responses", { nav.navigate("tracking/$id") { popUpTo("broadcast/$id") { inclusive = true } } })
         }
-        if (live) SmButton("Cancel request", { vm.cancelRequest(id) }, style = BtnStyle.Outline)
+        if (r.status.isActive) SmButton("Cancel request", { vm.cancelRequest(id) }, style = BtnStyle.Outline)
         else SmButton("Back to home", { nav.navigate("home") { popUpTo("home") { inclusive = true } } }, style = BtnStyle.Outline)
     }) {
         Spacer(Modifier.height(24.dp))

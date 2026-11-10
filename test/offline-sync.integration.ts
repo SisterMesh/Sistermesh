@@ -3,18 +3,18 @@ import {
   RequestUrgency,
   SyncEventStatus,
   UserRole,
-} from '@prisma/client';
-import { randomUUID } from 'node:crypto';
-import { AuthenticatedUser } from '../src/common/authenticated-user';
-import { DonationConfirmationsService } from '../src/modules/donation-confirmations/donation-confirmations.service';
-import { DonorResponsesService } from '../src/modules/donor-responses/donor-responses.service';
-import { EmergencyRequestsService } from '../src/modules/emergency-requests/emergency-requests.service';
-import { OfflineSyncService } from '../src/modules/offline-sync/offline-sync.service';
-import { PrismaService } from '../src/modules/prisma/prisma.service';
+} from "@prisma/client";
+import { randomUUID } from "node:crypto";
+import { AuthenticatedUser } from "../src/common/authenticated-user";
+import { DonationConfirmationsService } from "../src/modules/donation-confirmations/donation-confirmations.service";
+import { DonorResponsesService } from "../src/modules/donor-responses/donor-responses.service";
+import { EmergencyRequestsService } from "../src/modules/emergency-requests/emergency-requests.service";
+import { OfflineSyncService } from "../src/modules/offline-sync/offline-sync.service";
+import { PrismaService } from "../src/modules/prisma/prisma.service";
 
 jest.setTimeout(120_000);
 
-describe('Offline synchronization database integration', () => {
+describe("Offline synchronization database integration", () => {
   const prisma = new PrismaService();
   const requestIds: string[] = [];
   const userIds: string[] = [];
@@ -33,7 +33,10 @@ describe('Offline synchronization database integration', () => {
   beforeAll(async () => {
     await prisma.$connect();
     const facility = await prisma.facility.create({
-      data: { name: `Offline sync integration ${randomUUID()}`, status: 'ACTIVE' },
+      data: {
+        name: `Offline sync integration ${randomUUID()}`,
+        status: "ACTIVE",
+      },
     });
     facilityId = facility.id;
     facilityIds.push(facility.id);
@@ -41,38 +44,52 @@ describe('Offline synchronization database integration', () => {
     const workerRow = await prisma.user.create({
       data: {
         role: UserRole.HEALTH_WORKER,
-        displayName: 'Sync Integration Worker',
-        phoneNumber: `+${randomUUID().replaceAll('-', '').slice(0, 14)}`,
+        displayName: "Sync Integration Worker",
+        phoneNumber: `+${randomUUID().replaceAll("-", "").slice(0, 14)}`,
         healthWorkerProfile: {
-          create: { facilityId, verificationStatus: 'VERIFIED' },
+          create: { facilityId, verificationStatus: "VERIFIED" },
         },
       },
     });
     userIds.push(workerRow.id);
-    worker = { id: workerRow.id, role: UserRole.HEALTH_WORKER, status: 'ACTIVE' };
+    worker = {
+      id: workerRow.id,
+      role: UserRole.HEALTH_WORKER,
+      status: "ACTIVE",
+    };
 
     const otherFacility = await prisma.facility.create({
-      data: { name: `Offline sync unrelated ${randomUUID()}`, status: 'ACTIVE' },
+      data: {
+        name: `Offline sync unrelated ${randomUUID()}`,
+        status: "ACTIVE",
+      },
     });
     facilityIds.push(otherFacility.id);
     const otherWorker = await prisma.user.create({
       data: {
         role: UserRole.HEALTH_WORKER,
-        displayName: 'Unrelated Sync Worker',
-        phoneNumber: `+${randomUUID().replaceAll('-', '').slice(0, 14)}`,
+        displayName: "Unrelated Sync Worker",
+        phoneNumber: `+${randomUUID().replaceAll("-", "").slice(0, 14)}`,
         healthWorkerProfile: {
-          create: { facilityId: otherFacility.id, verificationStatus: 'VERIFIED' },
+          create: {
+            facilityId: otherFacility.id,
+            verificationStatus: "VERIFIED",
+          },
         },
       },
     });
     userIds.push(otherWorker.id);
-    unrelatedWorker = { id: otherWorker.id, role: UserRole.HEALTH_WORKER, status: 'ACTIVE' };
+    unrelatedWorker = {
+      id: otherWorker.id,
+      role: UserRole.HEALTH_WORKER,
+      status: "ACTIVE",
+    };
 
     const donorRow = await prisma.user.create({
       data: {
         role: UserRole.INDIVIDUAL,
-        displayName: 'Sync Integration Donor',
-        phoneNumber: `+${randomUUID().replaceAll('-', '').slice(0, 14)}`,
+        displayName: "Sync Integration Donor",
+        phoneNumber: `+${randomUUID().replaceAll("-", "").slice(0, 14)}`,
         donorProfile: {
           create: {
             bloodGroup: BloodGroup.A_POSITIVE,
@@ -83,9 +100,11 @@ describe('Offline synchronization database integration', () => {
       },
     });
     userIds.push(donorRow.id);
-    donor = { id: donorRow.id, role: UserRole.INDIVIDUAL, status: 'ACTIVE' };
+    donor = { id: donorRow.id, role: UserRole.INDIVIDUAL, status: "ACTIVE" };
     donorProfileId = (
-      await prisma.donorProfile.findUniqueOrThrow({ where: { userId: donorRow.id } })
+      await prisma.donorProfile.findUniqueOrThrow({
+        where: { userId: donorRow.id },
+      })
     ).id;
 
     sync = new OfflineSyncService(
@@ -98,13 +117,13 @@ describe('Offline synchronization database integration', () => {
     workerClientDeviceId = randomUUID();
     const workerDevice = await sync.registerDevice(worker, {
       clientDeviceId: workerClientDeviceId,
-      name: 'Integration worker device',
+      name: "Integration worker device",
     });
     workerDeviceId = workerDevice.deviceId;
     donorClientDeviceId = randomUUID();
     const donorDevice = await sync.registerDevice(donor, {
       clientDeviceId: donorClientDeviceId,
-      name: 'Integration donor device',
+      name: "Integration donor device",
     });
     donorDeviceId = donorDevice.deviceId;
 
@@ -120,33 +139,56 @@ describe('Offline synchronization database integration', () => {
   afterAll(async () => {
     const deviceIds = [workerDeviceId, donorDeviceId].filter(Boolean);
     if (deviceIds.length) {
-      await prisma.syncConflict.deleteMany({ where: { registeredDeviceId: { in: deviceIds } } });
-      await prisma.syncEvent.deleteMany({ where: { registeredDeviceId: { in: deviceIds } } });
-      await prisma.syncBatch.deleteMany({ where: { registeredDeviceId: { in: deviceIds } } });
-      await prisma.syncCheckpoint.deleteMany({ where: { registeredDeviceId: { in: deviceIds } } });
-      await prisma.registeredDevice.deleteMany({ where: { id: { in: deviceIds } } });
+      await prisma.syncConflict.deleteMany({
+        where: { registeredDeviceId: { in: deviceIds } },
+      });
+      await prisma.syncEvent.deleteMany({
+        where: { registeredDeviceId: { in: deviceIds } },
+      });
+      await prisma.syncBatch.deleteMany({
+        where: { registeredDeviceId: { in: deviceIds } },
+      });
+      await prisma.syncCheckpoint.deleteMany({
+        where: { registeredDeviceId: { in: deviceIds } },
+      });
+      await prisma.registeredDevice.deleteMany({
+        where: { id: { in: deviceIds } },
+      });
     }
     if (requestIds.length) {
-      await prisma.requestActivity.deleteMany({ where: { requestId: { in: requestIds } } });
-      await prisma.donationConfirmation.deleteMany({ where: { requestId: { in: requestIds } } });
-      await prisma.donorResponse.deleteMany({ where: { requestId: { in: requestIds } } });
-      await prisma.emergencyRequest.deleteMany({ where: { id: { in: requestIds } } });
+      await prisma.requestActivity.deleteMany({
+        where: { requestId: { in: requestIds } },
+      });
+      await prisma.donationConfirmation.deleteMany({
+        where: { requestId: { in: requestIds } },
+      });
+      await prisma.donorResponse.deleteMany({
+        where: { requestId: { in: requestIds } },
+      });
+      await prisma.emergencyRequest.deleteMany({
+        where: { id: { in: requestIds } },
+      });
     }
-    if (userIds.length) await prisma.user.deleteMany({ where: { id: { in: userIds } } });
-    if (facilityIds.length) await prisma.facility.deleteMany({ where: { id: { in: facilityIds } } });
+    if (userIds.length)
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    if (facilityIds.length)
+      await prisma.facility.deleteMany({ where: { id: { in: facilityIds } } });
     await prisma.$disconnect();
   });
 
-  it('processes partial batches idempotently, detects conflicts, pages safely, and enforces device ownership', async () => {
+  it("processes partial batches idempotently, detects conflicts, pages safely, and enforces device ownership", async () => {
     const firstEventId = randomUUID();
     const secondEventId = randomUUID();
     const badEventId = randomUUID();
     const batchId = randomUUID();
     const localCreatedAt = new Date().toISOString();
 
-    const requestEvent = (eventId: string, requestedBloodGroup: BloodGroup) => ({
+    const requestEvent = (
+      eventId: string,
+      requestedBloodGroup: BloodGroup,
+    ) => ({
       eventId,
-      eventType: 'request.create',
+      eventType: "request.create",
       entityId: null,
       originDeviceId: workerClientDeviceId,
       localCreatedAt,
@@ -158,19 +200,21 @@ describe('Offline synchronization database integration', () => {
       },
     });
     const approveRequest = async (requestId: string) => {
-      const request = await prisma.emergencyRequest.findUniqueOrThrow({ where: { id: requestId } });
+      const request = await prisma.emergencyRequest.findUniqueOrThrow({
+        where: { id: requestId },
+      });
       const review = await sync.uploadBatch(worker, workerDeviceId, {
         clientBatchId: randomUUID(),
         events: [
           {
             eventId: randomUUID(),
-            eventType: 'request.review',
+            eventType: "request.review",
             entityId: requestId,
             originDeviceId: workerClientDeviceId,
             localCreatedAt,
             payloadSchemaVersion: 1,
             payload: {
-              action: 'APPROVE',
+              action: "APPROVE",
               expectedUpdatedAt: request.updatedAt.toISOString(),
             },
           },
@@ -182,44 +226,58 @@ describe('Offline synchronization database integration', () => {
     const secondCreate = requestEvent(secondEventId, BloodGroup.A_POSITIVE);
     const invalidEvent = {
       eventId: badEventId,
-      eventType: 'request.unsupported',
+      eventType: "request.unsupported",
       entityId: null,
       originDeviceId: workerClientDeviceId,
       localCreatedAt,
       payloadSchemaVersion: 1,
       payload: {},
     };
-    const batch = { clientBatchId: batchId, events: [firstCreate, secondCreate, invalidEvent] };
+    const batch = {
+      clientBatchId: batchId,
+      events: [firstCreate, secondCreate, invalidEvent],
+    };
 
     const firstResult = await sync.uploadBatch(worker, workerDeviceId, batch);
-    expect(firstResult.status).toBe('PARTIALLY_COMPLETED');
+    expect(firstResult.status).toBe("PARTIALLY_COMPLETED");
     expect(firstResult.events.map((event) => event.status)).toEqual([
       SyncEventStatus.PROCESSED,
       SyncEventStatus.PROCESSED,
       SyncEventStatus.REJECTED,
     ]);
     const requestIdsFromResult = firstResult.events
-      .filter((event) => event.status === SyncEventStatus.PROCESSED && event.entityId)
+      .filter(
+        (event) => event.status === SyncEventStatus.PROCESSED && event.entityId,
+      )
       .map((event) => event.entityId!);
     requestIds.push(...requestIdsFromResult);
-    expect(await prisma.emergencyRequest.count({ where: { id: { in: requestIdsFromResult } } })).toBe(2);
+    expect(
+      await prisma.emergencyRequest.count({
+        where: { id: { in: requestIdsFromResult } },
+      }),
+    ).toBe(2);
 
     const replay = await sync.uploadBatch(worker, workerDeviceId, batch);
     expect(replay.events).toEqual(firstResult.events);
-    expect(await prisma.emergencyRequest.count({ where: { id: { in: requestIdsFromResult } } })).toBe(2);
+    expect(
+      await prisma.emergencyRequest.count({
+        where: { id: { in: requestIdsFromResult } },
+      }),
+    ).toBe(2);
 
-    for (const requestId of requestIdsFromResult) await approveRequest(requestId);
+    for (const requestId of requestIdsFromResult)
+      await approveRequest(requestId);
 
     const staleUpdate = {
       eventId: randomUUID(),
-      eventType: 'request.update',
+      eventType: "request.update",
       entityId: requestIdsFromResult[0],
       originDeviceId: workerClientDeviceId,
       localCreatedAt,
       payloadSchemaVersion: 1,
       payload: {
         urgency: RequestUrgency.CRITICAL,
-        expectedUpdatedAt: '2000-01-01T00:00:00.000Z',
+        expectedUpdatedAt: "2000-01-01T00:00:00.000Z",
       },
     };
     const staleResult = await sync.uploadBatch(worker, workerDeviceId, {
@@ -228,10 +286,14 @@ describe('Offline synchronization database integration', () => {
     });
     expect(staleResult.events[0]).toMatchObject({
       status: SyncEventStatus.CONFLICT,
-      errorCode: 'VERSION_CONFLICT',
+      errorCode: "VERSION_CONFLICT",
     });
     expect(
-      (await prisma.emergencyRequest.findUniqueOrThrow({ where: { id: requestIdsFromResult[0] } })).urgency,
+      (
+        await prisma.emergencyRequest.findUniqueOrThrow({
+          where: { id: requestIdsFromResult[0] },
+        })
+      ).urgency,
     ).toBe(RequestUrgency.URGENT);
 
     const changedReplay = {
@@ -244,9 +306,13 @@ describe('Offline synchronization database integration', () => {
     });
     expect(eventIdReuse.events[0]).toMatchObject({
       status: SyncEventStatus.CONFLICT,
-      errorCode: 'EVENT_ID_REUSE',
+      errorCode: "EVENT_ID_REUSE",
     });
-    expect(await prisma.syncConflict.count({ where: { registeredDeviceId: workerDeviceId } })).toBe(1);
+    expect(
+      await prisma.syncConflict.count({
+        where: { registeredDeviceId: workerDeviceId },
+      }),
+    ).toBe(1);
 
     const firstPage = await sync.getChanges(worker, workerDeviceId, 1);
     expect(firstPage.changes).toHaveLength(1);
@@ -256,13 +322,17 @@ describe('Offline synchronization database integration', () => {
       firstPage.changes.map((change) => change.cursor),
     );
     await expect(
-      sync.acknowledgeCheckpoint(worker, workerDeviceId, { cursor: (BigInt(firstPage.nextCursor) + 100n).toString() }),
+      sync.acknowledgeCheckpoint(worker, workerDeviceId, {
+        cursor: (BigInt(firstPage.nextCursor) + 100n).toString(),
+      }),
     ).rejects.toThrow();
     const allOwnerChanges = [];
     let page = firstPage;
     while (true) {
       allOwnerChanges.push(...page.changes);
-      await sync.acknowledgeCheckpoint(worker, workerDeviceId, { cursor: page.nextCursor });
+      await sync.acknowledgeCheckpoint(worker, workerDeviceId, {
+        cursor: page.nextCursor,
+      });
       if (!page.hasMore) break;
       page = await sync.getChanges(worker, workerDeviceId, 1);
       expect(page.changes).toHaveLength(1);
@@ -271,14 +341,24 @@ describe('Offline synchronization database integration', () => {
     expect(new Set(allOwnerChanges.map((change) => change.request.id))).toEqual(
       new Set(requestIdsFromResult),
     );
-    expect((await sync.getChanges(worker, workerDeviceId, 1)).changes).toHaveLength(0);
+    expect(
+      (await sync.getChanges(worker, workerDeviceId, 1)).changes,
+    ).toHaveLength(0);
 
     const donorChanges = await sync.getChanges(donor, donorDeviceId, 100);
     expect(donorChanges.changes).toHaveLength(2);
-    expect(donorChanges.changes.every((change) => change.request.id === requestIdsFromResult[1])).toBe(true);
-    expect(donorChanges.changes[0].request).not.toHaveProperty('donorResponses');
-    expect(donorChanges.changes[0].request).not.toHaveProperty('donorUser');
-    expect(donorChanges.changes[0].request).not.toHaveProperty('beneficiaryName');
+    expect(
+      donorChanges.changes.every(
+        (change) => change.request.id === requestIdsFromResult[1],
+      ),
+    ).toBe(true);
+    expect(donorChanges.changes[0].request).not.toHaveProperty(
+      "donorResponses",
+    );
+    expect(donorChanges.changes[0].request).not.toHaveProperty("donorUser");
+    expect(donorChanges.changes[0].request).not.toHaveProperty(
+      "beneficiaryName",
+    );
 
     const beforeUpdate = await prisma.emergencyRequest.findUniqueOrThrow({
       where: { id: requestIdsFromResult[0] },
@@ -289,7 +369,7 @@ describe('Offline synchronization database integration', () => {
       events: [
         {
           eventId: updateEventId,
-          eventType: 'request.update',
+          eventType: "request.update",
           entityId: requestIdsFromResult[0],
           originDeviceId: workerClientDeviceId,
           localCreatedAt,
@@ -301,12 +381,26 @@ describe('Offline synchronization database integration', () => {
         },
       ],
     };
-    const updateResult = await sync.uploadBatch(worker, workerDeviceId, updateBatch);
+    const updateResult = await sync.uploadBatch(
+      worker,
+      workerDeviceId,
+      updateBatch,
+    );
     expect(updateResult.events[0].status).toBe(SyncEventStatus.PROCESSED);
-    expect((await sync.uploadBatch(worker, workerDeviceId, updateBatch)).events).toEqual(updateResult.events);
-    expect(await prisma.requestActivity.count({ where: { syncEventId: updateEventId } })).toBe(1);
     expect(
-      (await prisma.emergencyRequest.findUniqueOrThrow({ where: { id: requestIdsFromResult[0] } })).urgency,
+      (await sync.uploadBatch(worker, workerDeviceId, updateBatch)).events,
+    ).toEqual(updateResult.events);
+    expect(
+      await prisma.requestActivity.count({
+        where: { syncEventId: updateEventId },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await prisma.emergencyRequest.findUniqueOrThrow({
+          where: { id: requestIdsFromResult[0] },
+        })
+      ).urgency,
     ).toBe(RequestUrgency.CRITICAL);
 
     const cancelledCreate = requestEvent(randomUUID(), BloodGroup.A_POSITIVE);
@@ -321,7 +415,7 @@ describe('Offline synchronization database integration', () => {
       events: [
         {
           eventId: randomUUID(),
-          eventType: 'request.cancel',
+          eventType: "request.cancel",
           entityId: cancelledRequestId,
           originDeviceId: workerClientDeviceId,
           localCreatedAt,
@@ -336,7 +430,7 @@ describe('Offline synchronization database integration', () => {
       events: [
         {
           eventId: randomUUID(),
-          eventType: 'donor-response.accept',
+          eventType: "donor-response.accept",
           entityId: cancelledRequestId,
           originDeviceId: donorClientDeviceId,
           localCreatedAt,
@@ -347,14 +441,21 @@ describe('Offline synchronization database integration', () => {
     });
     expect(lateResponse.events[0]).toMatchObject({
       status: SyncEventStatus.CONFLICT,
-      errorCode: 'REQUEST_CLOSED',
+      errorCode: "REQUEST_CLOSED",
     });
 
-    const confirmationCreate = requestEvent(randomUUID(), BloodGroup.A_POSITIVE);
-    const confirmationCreation = await sync.uploadBatch(worker, workerDeviceId, {
-      clientBatchId: randomUUID(),
-      events: [confirmationCreate],
-    });
+    const confirmationCreate = requestEvent(
+      randomUUID(),
+      BloodGroup.A_POSITIVE,
+    );
+    const confirmationCreation = await sync.uploadBatch(
+      worker,
+      workerDeviceId,
+      {
+        clientBatchId: randomUUID(),
+        events: [confirmationCreate],
+      },
+    );
     const confirmationRequestId = confirmationCreation.events[0].entityId!;
     requestIds.push(confirmationRequestId);
     await approveRequest(confirmationRequestId);
@@ -363,7 +464,7 @@ describe('Offline synchronization database integration', () => {
       events: [
         {
           eventId: randomUUID(),
-          eventType: 'donor-response.accept',
+          eventType: "donor-response.accept",
           entityId: confirmationRequestId,
           originDeviceId: donorClientDeviceId,
           localCreatedAt,
@@ -373,40 +474,56 @@ describe('Offline synchronization database integration', () => {
       ],
     });
     expect(donorAcceptance.events[0].status).toBe(SyncEventStatus.PROCESSED);
-    const donationConfirmation = await sync.uploadBatch(worker, workerDeviceId, {
-      clientBatchId: randomUUID(),
-      events: [
-        {
-          eventId: randomUUID(),
-          eventType: 'donation.confirm',
-          entityId: confirmationRequestId,
-          originDeviceId: workerClientDeviceId,
-          localCreatedAt,
-          payloadSchemaVersion: 1,
-          payload: {
-            donorProfileId,
-            receiptHash: 'a'.repeat(64),
+    const donationConfirmation = await sync.uploadBatch(
+      worker,
+      workerDeviceId,
+      {
+        clientBatchId: randomUUID(),
+        events: [
+          {
+            eventId: randomUUID(),
+            eventType: "donation.confirm",
+            entityId: confirmationRequestId,
+            originDeviceId: workerClientDeviceId,
+            localCreatedAt,
+            payloadSchemaVersion: 1,
+            payload: {
+              donorProfileId,
+              receiptHash: "a".repeat(64),
+            },
           },
-        },
-      ],
-    });
-    expect(donationConfirmation.events[0].status).toBe(SyncEventStatus.PROCESSED);
-    expect(
-      (await prisma.emergencyRequest.findUniqueOrThrow({ where: { id: confirmationRequestId } })).status,
-    ).toBe('FULFILLED');
-
-    expect((await sync.listConflicts(worker, workerDeviceId)).conflicts).toHaveLength(2);
-    expect((await sync.listConflicts(donor, donorDeviceId)).conflicts).toHaveLength(1);
-    await expect(sync.getChanges(unrelatedWorker, workerDeviceId)).rejects.toThrow(
-      'Registered device not found.',
+        ],
+      },
     );
+    expect(donationConfirmation.events[0].status).toBe(
+      SyncEventStatus.PROCESSED,
+    );
+    expect(
+      (
+        await prisma.emergencyRequest.findUniqueOrThrow({
+          where: { id: confirmationRequestId },
+        })
+      ).status,
+    ).toBe("FULFILLED");
+
+    expect(
+      (await sync.listConflicts(worker, workerDeviceId)).conflicts,
+    ).toHaveLength(2);
+    expect(
+      (await sync.listConflicts(donor, donorDeviceId)).conflicts,
+    ).toHaveLength(1);
+    await expect(
+      sync.getChanges(unrelatedWorker, workerDeviceId),
+    ).rejects.toThrow("Registered device not found.");
 
     await sync.revokeDevice(worker, workerDeviceId);
-    await expect(sync.uploadBatch(worker, workerDeviceId, batch)).rejects.toThrow(
-      'This device has been revoked.',
-    );
+    await expect(
+      sync.uploadBatch(worker, workerDeviceId, batch),
+    ).rejects.toThrow("This device has been revoked.");
     await expect(
       sync.registerDevice(worker, { clientDeviceId: workerClientDeviceId }),
-    ).rejects.toThrow('This device has been revoked and cannot be reactivated.');
+    ).rejects.toThrow(
+      "This device has been revoked and cannot be reactivated.",
+    );
   });
 });
