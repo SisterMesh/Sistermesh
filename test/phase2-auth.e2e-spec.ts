@@ -23,7 +23,7 @@ describe('Phase 2 authentication and access control', () => {
   let registeredPasswordHash: string | undefined;
   const safeDonor = {
     id: '00000000-0000-4000-8000-000000000051',
-    role: UserRole.DONOR,
+    role: UserRole.INDIVIDUAL,
     status: 'ACTIVE',
     displayName: 'Sample Donor',
     phoneNumber: '+2348012345678',
@@ -120,7 +120,7 @@ describe('Phase 2 authentication and access control', () => {
 
   async function bearer(role: UserRole) {
     const id =
-      role === UserRole.DONOR
+      role === UserRole.INDIVIDUAL
         ? safeDonor.id
         : role === UserRole.HEALTH_WORKER
           ? '00000000-0000-4000-8000-000000000053'
@@ -129,8 +129,8 @@ describe('Phase 2 authentication and access control', () => {
       id,
       role,
       status: 'ACTIVE',
-      displayName: role === UserRole.DONOR ? safeDonor.displayName : 'Authenticated User',
-      phoneNumber: role === UserRole.DONOR ? safeDonor.phoneNumber : '+2348012345679',
+      displayName: role === UserRole.INDIVIDUAL ? safeDonor.displayName : 'Authenticated User',
+      phoneNumber: role === UserRole.INDIVIDUAL ? safeDonor.phoneNumber : '+2348012345679',
     });
     return `Bearer ${await accessTokens.issue(id)}`;
   }
@@ -156,7 +156,7 @@ describe('Phase 2 authentication and access control', () => {
       .post('/api/auth/register/donor')
       .send(body)
       .expect(201);
-    expect(prismaMock.user.create.mock.calls[0][0].data.role).toBe(UserRole.DONOR);
+    expect(prismaMock.user.create.mock.calls[0][0].data.role).toBe(UserRole.INDIVIDUAL);
     expect(prismaMock.user.create.mock.calls[0][0].data.passwordHash).not.toBe(body.password);
     expect(response.body.user.passwordHash).toBeUndefined();
     expect(response.body.refreshToken).toBeUndefined();
@@ -178,14 +178,14 @@ describe('Phase 2 authentication and access control', () => {
   });
 
   it('derives user ownership from the verified token and rejects body-supplied identity', async () => {
-    usersService.getMine.mockResolvedValue({ id: safeDonor.id, role: UserRole.DONOR });
+    usersService.getMine.mockResolvedValue({ id: safeDonor.id, role: UserRole.INDIVIDUAL });
     usersService.updateMine.mockResolvedValue({ id: safeDonor.id, displayName: 'Updated Name' });
-    const authorization = await bearer(UserRole.DONOR);
+    const authorization = await bearer(UserRole.INDIVIDUAL);
 
     await request(app.getHttpServer())
       .get('/api/users/me')
       .set('Authorization', authorization)
-      .expect(200, { id: safeDonor.id, role: UserRole.DONOR });
+      .expect(200, { id: safeDonor.id, role: UserRole.INDIVIDUAL });
     await request(app.getHttpServer())
       .patch('/api/users/me')
       .set('Authorization', authorization)
@@ -210,7 +210,7 @@ describe('Phase 2 authentication and access control', () => {
 
     await request(app.getHttpServer())
       .post('/api/admin/facilities')
-      .set('Authorization', await bearer(UserRole.DONOR))
+      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
       .send(body)
       .expect(403);
     await request(app.getHttpServer())
@@ -228,7 +228,7 @@ describe('Phase 2 authentication and access control', () => {
   it('does not trust client role headers over the signed-in database account', async () => {
     await request(app.getHttpServer())
       .patch('/api/admin/health-workers/00000000-0000-4000-8000-000000000053/verification')
-      .set('Authorization', await bearer(UserRole.DONOR))
+      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
       .set('x-test-role', UserRole.ADMIN)
       .send({ verificationStatus: 'VERIFIED' })
       .expect(403);

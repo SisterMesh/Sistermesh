@@ -98,7 +98,7 @@ describe('coordination API with verified JWT authentication', () => {
 
   async function bearer(role: UserRole, status: AuthenticatedUser['status'] = 'ACTIVE') {
     const id =
-      role === UserRole.DONOR
+      role === UserRole.INDIVIDUAL
         ? '00000000-0000-4000-8000-000000000002'
         : role === UserRole.HEALTH_WORKER
           ? '00000000-0000-4000-8000-000000000001'
@@ -122,7 +122,7 @@ describe('coordination API with verified JWT authentication', () => {
       .expect(401);
     await request(app.getHttpServer())
       .post('/api/emergency-requests')
-      .set('Authorization', await bearer(UserRole.DONOR))
+      .set('Authorization', await bearer(UserRole.ADMIN))
       .send(body)
       .expect(403);
     await request(app.getHttpServer())
@@ -168,11 +168,11 @@ describe('coordination API with verified JWT authentication', () => {
 
     await request(app.getHttpServer())
       .get('/api/emergency-requests/eligible')
-      .set('Authorization', await bearer(UserRole.DONOR))
+      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
       .expect(200, eligible);
     await request(app.getHttpServer())
       .post('/api/donor-responses/00000000-0000-4000-8000-000000000010')
-      .set('Authorization', await bearer(UserRole.DONOR))
+      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
       .send({
         idempotencyKey: '00000000-0000-4000-8000-000000000012',
         status: 'ACCEPTED',
@@ -180,7 +180,7 @@ describe('coordination API with verified JWT authentication', () => {
       .expect(201, response);
 
     expect(donorResponses.respond).toHaveBeenCalledWith(
-      expect.objectContaining({ role: UserRole.DONOR }),
+      expect.objectContaining({ role: UserRole.INDIVIDUAL }),
       '00000000-0000-4000-8000-000000000010',
       { idempotencyKey: '00000000-0000-4000-8000-000000000012', status: 'ACCEPTED' },
     );
@@ -217,7 +217,7 @@ describe('coordination API with verified JWT authentication', () => {
 
     await request(app.getHttpServer())
       .get(`/api/donor-responses/requests/${requestId}`)
-      .set('Authorization', await bearer(UserRole.DONOR))
+      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
       .expect(403);
     await request(app.getHttpServer())
       .get(`/api/donor-responses/requests/${requestId}`)
@@ -225,13 +225,13 @@ describe('coordination API with verified JWT authentication', () => {
       .expect(200, rows);
     await request(app.getHttpServer())
       .post(`/api/donor-responses/${requestId}/withdraw`)
-      .set('Authorization', await bearer(UserRole.DONOR))
+      .set('Authorization', await bearer(UserRole.INDIVIDUAL))
       .send({ idempotencyKey: '00000000-0000-4000-8000-000000000021' })
       .expect(201, withdrawn);
 
     expect(donorResponses.listForRequest).toHaveBeenCalled();
     expect(donorResponses.withdraw).toHaveBeenCalledWith(
-      expect.objectContaining({ role: UserRole.DONOR }),
+      expect.objectContaining({ role: UserRole.INDIVIDUAL }),
       requestId,
       { idempotencyKey: '00000000-0000-4000-8000-000000000021' },
     );

@@ -94,6 +94,9 @@ describe('Emergency coordination database integration', () => {
       await prisma.donationConfirmation.deleteMany({
         where: { requestId: { in: createdRequestIds } },
       });
+      await prisma.requestActivity.deleteMany({
+        where: { requestId: { in: createdRequestIds } },
+      });
       await prisma.emergencyRequest.deleteMany({
         where: { id: { in: createdRequestIds } },
       });
@@ -116,7 +119,11 @@ describe('Emergency coordination database integration', () => {
       ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : {}),
     });
     createdRequestIds.push(request.id);
-    return request;
+    const stored = await prisma.emergencyRequest.findUniqueOrThrow({ where: { id: request.id } });
+    return requests.review(worker, request.id, {
+      action: 'APPROVE',
+      expectedUpdatedAt: stored.updatedAt.toISOString(),
+    });
   }
 
   function operationKey() {

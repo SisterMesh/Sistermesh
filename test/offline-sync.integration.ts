@@ -157,6 +157,27 @@ describe('Offline synchronization database integration', () => {
         units: 1,
       },
     });
+    const approveRequest = async (requestId: string) => {
+      const request = await prisma.emergencyRequest.findUniqueOrThrow({ where: { id: requestId } });
+      const review = await sync.uploadBatch(worker, workerDeviceId, {
+        clientBatchId: randomUUID(),
+        events: [
+          {
+            eventId: randomUUID(),
+            eventType: 'request.review',
+            entityId: requestId,
+            originDeviceId: workerClientDeviceId,
+            localCreatedAt,
+            payloadSchemaVersion: 1,
+            payload: {
+              action: 'APPROVE',
+              expectedUpdatedAt: request.updatedAt.toISOString(),
+            },
+          },
+        ],
+      });
+      expect(review.events[0].status).toBe(SyncEventStatus.PROCESSED);
+    };
     const firstCreate = requestEvent(firstEventId, BloodGroup.O_NEGATIVE);
     const secondCreate = requestEvent(secondEventId, BloodGroup.A_POSITIVE);
     const invalidEvent = {
@@ -186,6 +207,8 @@ describe('Offline synchronization database integration', () => {
     const replay = await sync.uploadBatch(worker, workerDeviceId, batch);
     expect(replay.events).toEqual(firstResult.events);
     expect(await prisma.emergencyRequest.count({ where: { id: { in: requestIdsFromResult } } })).toBe(2);
+
+    for (const requestId of requestIdsFromResult) await approveRequest(requestId);
 
     const staleUpdate = {
       eventId: randomUUID(),
@@ -225,28 +248,37 @@ describe('Offline synchronization database integration', () => {
     });
     expect(await prisma.syncConflict.count({ where: { registeredDeviceId: workerDeviceId } })).toBe(1);
 
-    const ownerChanges = await sync.getChanges(worker, workerDeviceId, 1);
-    expect(ownerChanges.changes).toHaveLength(1);
-    expect(ownerChanges.hasMore).toBe(true);
+    const firstPage = await sync.getChanges(worker, workerDeviceId, 1);
+    expect(firstPage.changes).toHaveLength(1);
+    expect(firstPage.hasMore).toBe(true);
     const repeatedPage = await sync.getChanges(worker, workerDeviceId, 1);
     expect(repeatedPage.changes.map((change) => change.cursor)).toEqual(
-      ownerChanges.changes.map((change) => change.cursor),
+      firstPage.changes.map((change) => change.cursor),
     );
-    await sync.acknowledgeCheckpoint(worker, workerDeviceId, { cursor: ownerChanges.nextCursor });
-    const secondPage = await sync.getChanges(worker, workerDeviceId, 1);
-    expect(secondPage.changes).toHaveLength(1);
-    expect(secondPage.changes[0].request.id).not.toBe(ownerChanges.changes[0].request.id);
     await expect(
-      sync.acknowledgeCheckpoint(worker, workerDeviceId, { cursor: (BigInt(secondPage.nextCursor) + 100n).toString() }),
+      sync.acknowledgeCheckpoint(worker, workerDeviceId, { cursor: (BigInt(firstPage.nextCursor) + 100n).toString() }),
     ).rejects.toThrow();
-    await sync.acknowledgeCheckpoint(worker, workerDeviceId, { cursor: secondPage.nextCursor });
+    const allOwnerChanges = [];
+    let page = firstPage;
+    while (true) {
+      allOwnerChanges.push(...page.changes);
+      await sync.acknowledgeCheckpoint(worker, workerDeviceId, { cursor: page.nextCursor });
+      if (!page.hasMore) break;
+      page = await sync.getChanges(worker, workerDeviceId, 1);
+      expect(page.changes).toHaveLength(1);
+    }
+    expect(allOwnerChanges).toHaveLength(4);
+    expect(new Set(allOwnerChanges.map((change) => change.request.id))).toEqual(
+      new Set(requestIdsFromResult),
+    );
     expect((await sync.getChanges(worker, workerDeviceId, 1)).changes).toHaveLength(0);
 
     const donorChanges = await sync.getChanges(donor, donorDeviceId, 100);
-    expect(donorChanges.changes).toHaveLength(1);
-    expect(donorChanges.changes[0].request.id).toBe(requestIdsFromResult[1]);
+    expect(donorChanges.changes).toHaveLength(2);
+    expect(donorChanges.changes.every((change) => change.request.id === requestIdsFromResult[1])).toBe(true);
     expect(donorChanges.changes[0].request).not.toHaveProperty('donorResponses');
     expect(donorChanges.changes[0].request).not.toHaveProperty('donorUser');
+    expect(donorChanges.changes[0].request).not.toHaveProperty('beneficiaryName');
 
     const beforeUpdate = await prisma.emergencyRequest.findUniqueOrThrow({
       where: { id: requestIdsFromResult[0] },
@@ -325,6 +357,7 @@ describe('Offline synchronization database integration', () => {
     });
     const confirmationRequestId = confirmationCreation.events[0].entityId!;
     requestIds.push(confirmationRequestId);
+    await approveRequest(confirmationRequestId);
     const donorAcceptance = await sync.uploadBatch(donor, donorDeviceId, {
       clientBatchId: randomUUID(),
       events: [

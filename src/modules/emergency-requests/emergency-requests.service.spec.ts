@@ -136,6 +136,7 @@ describe('EmergencyRequestsService', () => {
 
     const created = await new EmergencyRequestsService(prisma).create(requester, dto);
 
+    expect(created).toEqual(record);
     expect(tx.emergencyRequest.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

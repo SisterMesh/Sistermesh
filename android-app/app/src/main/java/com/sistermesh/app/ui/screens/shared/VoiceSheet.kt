@@ -196,12 +196,17 @@ fun VoiceSheet(
     }
 
     fun refreshModelStatus() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !onDeviceAvailable) {
-            modelStatus = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                "On-device voice input requires Android 12 or newer."
-            } else {
-                "No on-device speech recognizer is available on this device."
-            }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            modelStatus = "On-device voice input requires Android 12 or newer."
+            return
+        }
+        if (!onDeviceAvailable) {
+            modelStatus = "No on-device speech recognizer is available on this device."
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            modelStatus =
+                "On-device recognition is available. This Android version cannot check or request model downloads in SisterMesh."
             return
         }
 
