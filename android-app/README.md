@@ -52,9 +52,14 @@ Open responses, coordinate, record the donation and view the receipt (real SHA-2
   destructive migration fallback is configured. Future schema versions must include explicit migrations
   and migration tests.
 
+## Voice
+- The request form and home/profile voice entry points use Android's on-device speech recognition on supported Android 12+ devices. Audio never falls back to a remote recognizer.
+- Transcripts are editable and explicitly confirmed before conservative field prefill; the existing request form still requires a separate final submit.
+- Text-to-speech uses installed offline English voices only. The OS/provider manages recognition and speech models.
+- Device and language availability limitations, model comparisons, licensing notes, and unverified hardware checks are documented in `OFFLINE_VOICE.md`.
+
 ## Not implemented in this phase
 - Backend or automatic synchronization; the event queue is local only.
 - Nearby Connections in place of `startDiscovery`
 - Real runtime permissions in PermissionsScreen
-- Offline STT/TTS in VoiceSheet
 - Polygon Amoy anchoring for Receipt.hash

@@ -126,7 +126,15 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
 
         Spacer(Modifier.height(28.dp))
     }
-    if (voice) VoiceSheet(Role.INDIVIDUAL) { voice = false }
+    if (voice) VoiceSheet(
+        role = Role.INDIVIDUAL,
+        onTranscriptConfirmed = { transcript ->
+            vm.stageVoiceRequestTranscript(transcript)
+            voice = false
+            nav.navigate("create_request")
+        },
+        onDismiss = { voice = false }
+    )
 }
 
 @Composable

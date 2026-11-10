@@ -77,7 +77,15 @@ fun ChwHomeScreen(vm: AppViewModel, nav: NavController) {
         }
         Spacer(Modifier.height(24.dp))
     }
-    if (voice) VoiceSheet(Role.CHW) { voice = false }
+    if (voice) VoiceSheet(
+        role = Role.CHW,
+        onTranscriptConfirmed = { transcript ->
+            vm.stageVoiceRequestTranscript(transcript)
+            voice = false
+            nav.navigate("create_request")
+        },
+        onDismiss = { voice = false }
+    )
 }
 
 // S09

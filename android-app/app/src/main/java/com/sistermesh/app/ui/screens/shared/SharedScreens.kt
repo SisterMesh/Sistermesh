@@ -287,7 +287,15 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(28.dp))
     }
 
-    if (voice) VoiceSheet(p.role) { voice = false }
+    if (voice) VoiceSheet(
+        role = p.role,
+        onTranscriptConfirmed = { transcript ->
+            vm.stageVoiceRequestTranscript(transcript)
+            voice = false
+            nav.navigate("create_request")
+        },
+        onDismiss = { voice = false }
+    )
     if (confirmReset) AlertDialog(
         onDismissRequest = { confirmReset = false },
         containerColor = Paper,

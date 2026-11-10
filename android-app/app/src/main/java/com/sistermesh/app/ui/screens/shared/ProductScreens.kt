@@ -9,23 +9,29 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.LocalHospital
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.sistermesh.app.data.AppViewModel
@@ -52,7 +58,11 @@ import com.sistermesh.app.ui.components.tone
 import com.sistermesh.app.ui.theme.Coral
 import com.sistermesh.app.ui.theme.Ink
 import com.sistermesh.app.ui.theme.Muted
+import com.sistermesh.app.ui.theme.Mint
+import com.sistermesh.app.ui.theme.MintSoft
 import com.sistermesh.app.ui.theme.Teal
+import com.sistermesh.app.voice.OfflineSpeechOutput
+import com.sistermesh.app.voice.RequestVoiceParser
 
 @Composable
 fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
@@ -446,6 +456,11 @@ fun EditRequestSubmissionScreen(vm: AppViewModel, nav: NavController, requestId:
 
 @Composable
 fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
+    val context = LocalContext.current
+    val speechOutput = remember(context) { OfflineSpeechOutput(context) }
+    DisposableEffect(speechOutput) {
+        onDispose { speechOutput.close() }
+    }
     val profile = vm.profile
     val isWorker = profile?.role == Role.CHW
     var group by remember { mutableStateOf("") }
@@ -457,10 +472,24 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
     var information by remember { mutableStateOf("") }
     var tried by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+    var voiceSheet by remember { mutableStateOf(false) }
+    var voiceTranscript by remember { mutableStateOf("") }
     var selectedFacilityId by remember { mutableStateOf(profile?.facilityId.orEmpty()) }
     val selectedFacility = vm.facilities.firstOrNull { it.id == selectedFacilityId }
     val facilityReady = if (isWorker) !profile?.facilityId.isNullOrBlank() else selectedFacility != null
     val valid = group.isNotBlank() && facilityReady && (isForSelf || beneficiaryName.isNotBlank())
+
+    fun applyVoiceTranscript(transcript: String) {
+        voiceTranscript = transcript
+        val extracted = RequestVoiceParser.parse(transcript, vm.facilities)
+        extracted.bloodGroup?.let { group = it }
+        extracted.units?.let { units = it }
+        extracted.facilityId?.let { selectedFacilityId = it }
+    }
+
+    LaunchedEffect(vm.pendingVoiceRequestTranscript) {
+        vm.consumeVoiceRequestTranscript()?.let(::applyVoiceTranscript)
+    }
 
     Page(footer = {
         SmButton(
@@ -477,13 +506,38 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
                         beneficiaryName.takeIf { !isForSelf },
                         relationship.takeIf { !isForSelf && it.isNotBlank() },
                         information.takeIf(String::isNotBlank)
-                    ) { nav.navigate("activity") }
+                    ) {
+                        speechOutput.speak("Your blood request has been saved for facility review.")
+                        nav.navigate("activity")
+                    }
                 }
             },
             enabled = valid
         )
     }) {
         BackHeader("New blood request", { nav.popBackStack() })
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Dictate request details", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = { voiceSheet = true }) {
+                Icon(Icons.Rounded.Mic, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Use voice")
+            }
+        }
+        if (voiceTranscript.isNotBlank()) {
+            SmCard(tint = MintSoft, border = Mint) {
+                Text("Transcript reviewed", style = MaterialTheme.typography.labelMedium, color = Teal)
+                Spacer(Modifier.height(4.dp))
+                Text(voiceTranscript, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Check the fields below. Missing or ambiguous details were not filled automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Muted
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+        }
         Text(
             "The selected facility reviews your request before it appears to donors.",
             style = MaterialTheme.typography.bodyLarge,
@@ -557,5 +611,16 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(12.dp))
         Notice("Donors see only the blood group, urgency, number of units, and approved facility. Names and notes stay private.")
         Spacer(Modifier.height(24.dp))
+    }
+
+    if (voiceSheet) {
+        VoiceSheet(
+            role = profile?.role ?: Role.INDIVIDUAL,
+            onTranscriptConfirmed = { transcript ->
+                applyVoiceTranscript(transcript)
+                voiceSheet = false
+            },
+            onDismiss = { voiceSheet = false }
+        )
     }
 }

@@ -57,6 +57,8 @@ class AppViewModel(
     var accountError by mutableStateOf<String?>(null); private set
     var accountMessage by mutableStateOf<String?>(null)
     var facilityCatalogError by mutableStateOf<String?>(null)
+    var pendingVoiceRequestTranscript by mutableStateOf<String?>(null)
+        private set
 
     val incoming = mutableStateListOf<IncomingRequest>()
     val requests = mutableStateListOf<BloodRequest>()
@@ -392,6 +394,14 @@ class AppViewModel(
 
     fun request(id: String) = requests.firstOrNull { it.id == id }
         ?: facilityRequests.firstOrNull { it.id == id }
+
+    fun stageVoiceRequestTranscript(transcript: String) {
+        pendingVoiceRequestTranscript = transcript
+    }
+
+    fun consumeVoiceRequestTranscript(): String? =
+        pendingVoiceRequestTranscript.also { pendingVoiceRequestTranscript = null }
+
     fun incomingById(id: String) = incoming.firstOrNull { it.id == id }
     fun receipt(id: String) = receipts.firstOrNull { it.id == id }
 
