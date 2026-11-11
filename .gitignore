@@ -4,6 +4,12 @@ coverage/
 .env
 .env.*
 !.env.example
+# Replit-local configuration and agent context
+.replit
+.agents/
+.local/
+# User-provided assets and notes that are not app source
+attached_assets/
 .DS_Store
 npm-debug.log*
 *.log
