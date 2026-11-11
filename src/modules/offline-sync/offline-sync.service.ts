@@ -21,18 +21,13 @@ import { validate } from 'class-validator';
 import { createHash } from 'node:crypto';
 import { isUUID } from 'class-validator';
 import { AuthenticatedUser } from '../../common/authenticated-user';
-import { CreateDonationConfirmationDto } from '../donation-confirmations/dto/create-donation-confirmation.dto';
-import { DonationConfirmationsService } from '../donation-confirmations/donation-confirmations.service';
 import { CreateDonorResponseDto } from '../donor-responses/dto/create-donor-response.dto';
 import { WithdrawDonorResponseDto } from '../donor-responses/dto/withdraw-donor-response.dto';
 import { DonorResponsesService } from '../donor-responses/donor-responses.service';
 import { DONOR_GROUPS_FOR_RECIPIENT } from '../donors/blood-compatibility';
 import { CreateEmergencyRequestDto } from '../emergency-requests/dto/create-emergency-request.dto';
-import { ReviewEmergencyRequestDto } from '../emergency-requests/dto/review-emergency-request.dto';
-import { UpdateEmergencyRequestDto } from '../emergency-requests/dto/update-emergency-request.dto';
 import { UpdateRequestSubmissionDto } from '../emergency-requests/dto/update-request-submission.dto';
 import { EmergencyRequestsService } from '../emergency-requests/emergency-requests.service';
-import { SyncRequestUpdatePayloadDto } from './dto/sync-request-update-payload.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import { UploadSyncBatchDto } from './dto/upload-sync-batch.dto';
 import { AckSyncCheckpointDto } from './dto/ack-sync-checkpoint.dto';
@@ -71,11 +66,13 @@ export class OfflineSyncService {
     private readonly prisma: PrismaService,
     private readonly emergencyRequests: EmergencyRequestsService,
     private readonly donorResponses: DonorResponsesService,
-    private readonly donationConfirmations: DonationConfirmationsService,
   ) {}
 
   async registerDevice(user: AuthenticatedUser, dto: RegisterDeviceDto) {
-    await this.assertActiveUser(user.id);
+    const actor = await this.assertActiveUser(user.id);
+    if (actor.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('Only individual accounts can synchronize app data.');
+    }
     const existing = await this.prisma.registeredDevice.findUnique({
       where: {
         userId_clientDeviceId: { userId: user.id, clientDeviceId: dto.clientDeviceId },
@@ -156,8 +153,8 @@ export class OfflineSyncService {
 
   async uploadBatch(user: AuthenticatedUser, deviceId: string, dto: UploadSyncBatchDto) {
     const device = await this.assertOwnedActiveDevice(user.id, deviceId);
-    if (user.role !== UserRole.INDIVIDUAL && user.role !== UserRole.HEALTH_WORKER) {
-      throw new ForbiddenException('Only individuals and health workers can upload coordination events.');
+    if (user.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('Only individual accounts can upload coordination events.');
     }
     if (!isUUID(dto.clientBatchId) || !Array.isArray(dto.events) || dto.events.length < 1 || dto.events.length > 100) {
       throw new BadRequestException('A batch requires a UUID and between 1 and 100 events.');
@@ -312,6 +309,11 @@ export class OfflineSyncService {
             reviewedAt: true,
             createdAt: true,
             updatedAt: true,
+            facilityId: true,
+            facilityName: true,
+            facilityLocation: true,
+            facilityLatitude: true,
+            facilityLongitude: true,
             facility: { select: { id: true, name: true, locality: true, state: true } },
           },
         },
@@ -337,7 +339,7 @@ export class OfflineSyncService {
       changes: page.map((activity) => {
         const request = activity.request;
         const isMine = request.createdByUserId === user.id;
-        const canSeePrivateDetails = isMine || user.role === UserRole.HEALTH_WORKER;
+        const canSeePrivateDetails = isMine;
         return {
           cursor: activity.syncCursor.toString(),
           eventType: activity.eventType,
@@ -354,7 +356,16 @@ export class OfflineSyncService {
             expiresAt: request.expiresAt,
             createdAt: request.createdAt,
             updatedAt: request.updatedAt,
-            facility: request.facility,
+            facility: request.facility ?? {
+              id: request.facilityId ?? '',
+              name: request.facilityName,
+              locality: request.facilityLocation,
+              state: '',
+            },
+            facilityName: request.facilityName,
+            facilityLocation: request.facilityLocation,
+            facilityLatitude: request.facilityLatitude,
+            facilityLongitude: request.facilityLongitude,
             ...(canSeePrivateDetails
               ? {
                   isForSelf: request.isForSelf,
@@ -628,6 +639,10 @@ export class OfflineSyncService {
           'units',
           'expiresAt',
           'facilityId',
+          'facilityName',
+          'facilityLocation',
+          'facilityLatitude',
+          'facilityLongitude',
           'isForSelf',
           'beneficiaryName',
           'beneficiaryRelationship',
@@ -642,52 +657,26 @@ export class OfflineSyncService {
       }
       case SyncEventType.REQUEST_UPDATE: {
         this.assertEntityId(event);
-        if (user.role === UserRole.INDIVIDUAL) {
-          this.assertPayloadKeys(event.payload, [
-            'requestedBloodGroup',
-            'urgency',
-            'units',
-            'expiresAt',
-            'expectedUpdatedAt',
-            'isForSelf',
-            'beneficiaryName',
-            'beneficiaryRelationship',
-            'additionalInfo',
-          ]);
-          const payload = await this.validatePayload(UpdateRequestSubmissionDto, event.payload);
-          const { expectedUpdatedAt, ...updates } = payload;
-          const updated = await this.emergencyRequests.updateSubmission(
-            user,
-            entityId,
-            updates,
-            new Date(expectedUpdatedAt),
-            event.eventId,
-          );
-          return updated.id;
-        }
         this.assertPayloadKeys(event.payload, [
           'requestedBloodGroup',
           'urgency',
           'units',
           'expiresAt',
           'expectedUpdatedAt',
+            'isForSelf',
+            'beneficiaryName',
+            'beneficiaryRelationship',
+            'additionalInfo',
         ]);
-        const payload = await this.validatePayload(SyncRequestUpdatePayloadDto, event.payload);
+        const payload = await this.validatePayload(UpdateRequestSubmissionDto, event.payload);
         const { expectedUpdatedAt, ...updates } = payload;
-        const updated = await this.emergencyRequests.update(
+        const updated = await this.emergencyRequests.updateSubmission(
           user,
           entityId,
-          updates as UpdateEmergencyRequestDto,
+          updates,
           new Date(expectedUpdatedAt),
           event.eventId,
         );
-        return updated.id;
-      }
-      case SyncEventType.REQUEST_REVIEW: {
-        this.assertEntityId(event);
-        this.assertPayloadKeys(event.payload, ['action', 'reason', 'expectedUpdatedAt']);
-        const payload = await this.validatePayload(ReviewEmergencyRequestDto, event.payload);
-        const updated = await this.emergencyRequests.review(user, entityId, payload, event.eventId);
         return updated.id;
       }
       case SyncEventType.DONOR_RESPONSE_ACCEPT:
@@ -715,16 +704,6 @@ export class OfflineSyncService {
         this.assertEntityId(event);
         this.assertPayloadKeys(event.payload, []);
         await this.emergencyRequests.cancel(user, entityId);
-        return entityId;
-      }
-      case SyncEventType.DONATION_CONFIRM: {
-        this.assertEntityId(event);
-        this.assertPayloadKeys(event.payload, ['donorProfileId', 'receiptHash', 'consentedAt']);
-        const dto = await this.validatePayload(CreateDonationConfirmationDto, {
-          ...event.payload,
-          idempotencyKey: event.eventId,
-        });
-        await this.donationConfirmations.confirm(user, entityId, dto);
         return entityId;
       }
       default:
@@ -892,22 +871,8 @@ export class OfflineSyncService {
 
   private async authorizedActivityWhere(user: AuthenticatedUser): Promise<Prisma.EmergencyRequestWhereInput> {
     const currentUser = await this.assertActiveUser(user.id);
-    if (currentUser.role === UserRole.HEALTH_WORKER) {
-      const worker = await this.prisma.healthWorkerProfile.findUnique({
-        where: { userId: user.id },
-        include: { facility: { select: { status: true } } },
-      });
-      if (
-        worker?.verificationStatus !== 'VERIFIED' ||
-        !worker.facilityId ||
-        worker.facility?.status !== 'ACTIVE'
-      ) {
-        throw new ForbiddenException('A verified health worker assigned to an active facility is required.');
-      }
-      return { facilityId: worker.facilityId };
-    }
     if (currentUser.role !== UserRole.INDIVIDUAL) {
-      throw new ForbiddenException('Only individuals and health workers can download coordination changes.');
+      throw new ForbiddenException('Only individual accounts can download coordination changes.');
     }
     const donor = await this.prisma.donorProfile.findUnique({
       where: { userId: user.id },

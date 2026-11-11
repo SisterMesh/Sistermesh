@@ -233,7 +233,11 @@ model EmergencyRequest {
   id                 String                 @id @default(uuid()) @db.Uuid
   clientRequestId    String                 @unique @db.Uuid
   createdByUserId    String                 @db.Uuid
-  facilityId         String                 @db.Uuid
+  facilityId         String?                @db.Uuid
+  facilityName       String                 @default("")
+  facilityLocation   String                 @default("")
+  facilityLatitude   Float?
+  facilityLongitude  Float?
   isForSelf          Boolean                @default(true)
   beneficiaryName    String?
   beneficiaryRelationship String?
@@ -250,7 +254,7 @@ model EmergencyRequest {
   updatedAt           DateTime               @updatedAt
   createdBy           User                   @relation("RequestCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
   reviewedBy          User?                  @relation("RequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
-  facility            Facility               @relation(fields: [facilityId], references: [id], onDelete: Restrict)
+  facility            Facility?              @relation(fields: [facilityId], references: [id], onDelete: Restrict)
   donorResponses      DonorResponse[]
   activityHistory     RequestActivity[]
   confirmations       DonationConfirmation[]

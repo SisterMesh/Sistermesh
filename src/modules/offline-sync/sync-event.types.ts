@@ -1,12 +1,10 @@
 export enum SyncEventType {
   REQUEST_CREATE = 'request.create',
   REQUEST_UPDATE = 'request.update',
-  REQUEST_REVIEW = 'request.review',
   DONOR_RESPONSE_ACCEPT = 'donor-response.accept',
   DONOR_RESPONSE_DECLINE = 'donor-response.decline',
   DONOR_WITHDRAW = 'donor.withdraw',
   REQUEST_CANCEL = 'request.cancel',
-  DONATION_CONFIRM = 'donation.confirm',
 }
 
 export interface SyncEventEnvelope {

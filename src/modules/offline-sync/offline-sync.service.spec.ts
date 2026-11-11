@@ -1,7 +1,6 @@
 import { AccountStatus, SyncBatchStatus, SyncEventStatus, UserRole } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { AuthenticatedUser } from '../../common/authenticated-user';
-import { DonationConfirmationsService } from '../donation-confirmations/donation-confirmations.service';
 import { DonorResponsesService } from '../donor-responses/donor-responses.service';
 import { EmergencyRequestsService } from '../emergency-requests/emergency-requests.service';
 import { OfflineSyncService } from './offline-sync.service';
@@ -20,7 +19,7 @@ type EventRecord = {
 describe('OfflineSyncService', () => {
   const user: AuthenticatedUser = {
     id: randomUUID(),
-    role: UserRole.HEALTH_WORKER,
+    role: UserRole.INDIVIDUAL,
     status: 'ACTIVE',
   };
   const deviceId = randomUUID();
@@ -89,7 +88,6 @@ describe('OfflineSyncService', () => {
       prisma as unknown as PrismaService,
       emergencyRequests as unknown as EmergencyRequestsService,
       {} as DonorResponsesService,
-      {} as DonationConfirmationsService,
     );
     return { service, prisma, emergencyRequests };
   };

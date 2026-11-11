@@ -300,7 +300,10 @@ object MeshEventValidator {
         when (packet.eventType) {
             "request.create" -> {
                 require(payload.keys().asSequence().all {
-                    it in setOf("requestedBloodGroup", "urgency", "units", "expiresAt", "publicationStatus")
+                    it in setOf(
+                        "requestedBloodGroup", "urgency", "units", "expiresAt", "publicationStatus",
+                        "facilityName", "facilityLocation", "facilityLatitude", "facilityLongitude"
+                    )
                 }) {
                     "Unexpected request field."
                 }
@@ -311,6 +314,21 @@ object MeshEventValidator {
                     require(payload.getString("publicationStatus") in setOf("OPEN", "PARTIALLY_FILLED")) {
                         "Unverified requests cannot be shared with donors."
                     }
+                }
+                payload.optString("facilityName").takeIf(String::isNotBlank)?.let {
+                    require(it.length <= 120) { "Facility name is too long." }
+                }
+                payload.optString("facilityLocation").takeIf(String::isNotBlank)?.let {
+                    require(it.length <= 240) { "Facility location is too long." }
+                }
+                val hasLatitude = payload.has("facilityLatitude") && !payload.isNull("facilityLatitude")
+                val hasLongitude = payload.has("facilityLongitude") && !payload.isNull("facilityLongitude")
+                require(hasLatitude == hasLongitude) { "Facility coordinates must include both latitude and longitude." }
+                if (hasLatitude) {
+                    val latitude = payload.getDouble("facilityLatitude")
+                    val longitude = payload.getDouble("facilityLongitude")
+                    require(latitude.isFinite() && latitude in -90.0..90.0) { "Invalid facility latitude." }
+                    require(longitude.isFinite() && longitude in -180.0..180.0) { "Invalid facility longitude." }
                 }
                 require(packet.localEntityId?.length in 1..128) { "Missing originating request ID." }
             }

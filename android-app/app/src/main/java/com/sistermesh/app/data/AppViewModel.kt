@@ -36,7 +36,7 @@ class AppViewModel(
 ) : ViewModel() {
 
     var profile by mutableStateOf<Profile?>(null); private set
-    var pendingRole by mutableStateOf<Role?>(null)
+    var pendingUseMode by mutableStateOf<UseMode?>(null)
     var available by mutableStateOf(true); private set
     private val languageState = mutableStateOf("English")
     var language: String
@@ -57,14 +57,11 @@ class AppViewModel(
     var accountBusy by mutableStateOf(false); private set
     var accountError by mutableStateOf<String?>(null); private set
     var accountMessage by mutableStateOf<String?>(null)
-    var facilityCatalogError by mutableStateOf<String?>(null)
     var pendingVoiceRequestTranscript by mutableStateOf<String?>(null)
         private set
 
     val incoming = mutableStateListOf<IncomingRequest>()
     val requests = mutableStateListOf<BloodRequest>()
-    val facilityRequests = mutableStateListOf<BloodRequest>()
-    val facilities = mutableStateListOf<Facility>()
     val receipts = mutableStateListOf<Receipt>()
     val messages = mutableStateListOf<ChatMessage>()
     val pendingEvents = mutableStateListOf<SyncEventEntity>()
@@ -83,8 +80,6 @@ class AppViewModel(
 
             launch { repository.observeProfile().collect { profile = it } }
             launch { repository.observeRequests().collect { replace(requests, it) } }
-            launch { repository.observeFacilityRequests().collect { replace(facilityRequests, it) } }
-            launch { repository.observeFacilities().collect { replace(facilities, it) } }
             launch { repository.observeIncoming().collect { replace(incoming, it) } }
             launch { repository.observeReceipts().collect { replace(receipts, it) } }
             launch { repository.observePendingEvents().collect { replace(pendingEvents, it) } }
@@ -102,10 +97,6 @@ class AppViewModel(
                     val user = (state as? AccountState.SignedIn)?.user ?: return@collect
                     val local = profile ?: return@collect
                     val updated = when {
-                        local.role == Role.CHW &&
-                            !user.healthWorkerFacilityId.isNullOrBlank() &&
-                            local.facilityId != user.healthWorkerFacilityId ->
-                            local.copy(facilityId = user.healthWorkerFacilityId)
                         local.role == Role.INDIVIDUAL &&
                             local.bloodGroup.isBlank() &&
                             !user.donorBloodGroup.isNullOrBlank() ->
@@ -131,25 +122,11 @@ class AppViewModel(
                     val expectedRole = profile?.role?.toBackendRole()
                     if (online) {
                         authRepository.restore(expectedRole)
-                        runCatching {
-                            repository.storeFacilities(authRepository.listFacilities().map {
-                                Facility(it.id, it.name, it.locality, it.state)
-                            })
-                        }.onSuccess { facilityCatalogError = null }
-                            .onFailure {
-                                if (facilities.isEmpty()) {
-                                    facilityCatalogError = "Facility list could not be refreshed. Connect to the internet to load facilities."
-                                }
-                            }
                     } else authRepository.restoreOffline()
                 }
             }
             launch {
-                combine(
-                    repository.observeAllEvents(),
-                    repository.observeRequests(),
-                    repository.observeFacilityRequests()
-                ) { events, _, _ -> events }.collect { events ->
+                repository.observeAllEvents().collect { events ->
                     events.forEach { nearbyManager.enqueue(it) }
                 }
             }
@@ -172,7 +149,7 @@ class AppViewModel(
 
     fun loginAccount(phoneNumber: String, password: String) {
         val expectedRole = profile?.role?.toBackendRole() ?: run {
-            accountError = "Create a local individual or health-worker profile first."
+            accountError = "Create a Find Blood or Donate Blood profile first."
             return
         }
         accountBusy = true
@@ -190,9 +167,9 @@ class AppViewModel(
         }
     }
 
-    fun registerAccount(phoneNumber: String, password: String, professionalId: String = "") {
+    fun registerAccount(phoneNumber: String, password: String) {
         val localProfile = profile ?: run {
-            accountError = "Create a local individual or health-worker profile first."
+            accountError = "Create a Find Blood or Donate Blood profile first."
             return
         }
         accountBusy = true
@@ -200,26 +177,15 @@ class AppViewModel(
         accountMessage = null
         viewModelScope.launch {
             try {
-                when (localProfile.role) {
-                    Role.INDIVIDUAL -> {
-                        authRepository.registerIndividual(
+                authRepository.registerIndividual(
                         displayName = localProfile.name,
                         phoneNumber = phoneNumber.trim(),
                         password = password
-                        )
-                        if (localProfile.bloodGroup.isNotBlank()) {
-                            authRepository.createDonorProfile(
-                                bloodGroup = localProfile.bloodGroup.toBackendBloodGroup(),
-                                locality = localProfile.area
-                            )
-                        }
-                    }
-                    Role.CHW -> authRepository.registerHealthWorker(
-                        displayName = localProfile.name,
-                        phoneNumber = phoneNumber.trim(),
-                        password = password,
-                        designation = localProfile.designation,
-                        professionalId = professionalId.trim()
+                )
+                if (localProfile.bloodGroup.isNotBlank()) {
+                    authRepository.createDonorProfile(
+                        bloodGroup = localProfile.bloodGroup.toBackendBloodGroup(),
+                        locality = localProfile.area
                     )
                 }
                 accountMessage = "Account created. Confirm the local profile link before syncing."
@@ -261,14 +227,23 @@ class AppViewModel(
         }
     }
 
-    fun disconnectAccount() {
+    fun disconnectAccount() = endSession(clearLocalProfile = false) {}
+
+    fun logout(onDone: () -> Unit) = endSession(clearLocalProfile = true, onDone = onDone)
+
+    private fun endSession(clearLocalProfile: Boolean, onDone: () -> Unit) {
         accountBusy = true
         accountError = null
         viewModelScope.launch {
             try {
                 syncWorkScheduler.cancelAll()
                 authRepository.logout()
+                if (clearLocalProfile) {
+                    repository.clearProfile()
+                    profile = null
+                }
                 accountMessage = "Signed out. Local records remain on this phone."
+                onDone()
             } catch (error: Exception) {
                 accountError = accountErrorMessage(error)
             } finally {
@@ -333,7 +308,7 @@ class AppViewModel(
 
     private fun Role.toBackendRole(): String = when (this) {
         Role.INDIVIDUAL -> "INDIVIDUAL"
-        Role.CHW -> "HEALTH_WORKER"
+        Role.CHW -> "INDIVIDUAL"
     }
 
     private fun String.toBackendBloodGroup(): String = when (uppercase()) {
@@ -398,7 +373,6 @@ class AppViewModel(
     }
 
     fun request(id: String) = requests.firstOrNull { it.id == id }
-        ?: facilityRequests.firstOrNull { it.id == id }
 
     fun stageVoiceRequestTranscript(transcript: String) {
         pendingVoiceRequestTranscript = transcript
@@ -410,13 +384,14 @@ class AppViewModel(
     fun incomingById(id: String) = incoming.firstOrNull { it.id == id }
     fun receipt(id: String) = receipts.firstOrNull { it.id == id }
 
-    // ---------- CHW ----------
-
     fun createRequest(
         group: String,
         urgency: Urgency,
         units: Int,
-        facilityId: String,
+        facilityName: String,
+        facilityLocation: String,
+        facilityLatitude: Double?,
+        facilityLongitude: Double?,
         isForSelf: Boolean,
         beneficiaryName: String?,
         beneficiaryRelationship: String?,
@@ -428,7 +403,10 @@ class AppViewModel(
                 group,
                 urgency,
                 units,
-                facilityId,
+                facilityName,
+                facilityLocation,
+                facilityLatitude,
+                facilityLongitude,
                 isForSelf,
                 beneficiaryName,
                 beneficiaryRelationship,
@@ -436,27 +414,10 @@ class AppViewModel(
                 eventOwnerAccountId()
             )
             scheduleSyncAfterLocalChange()
-            if (profile?.role == Role.CHW) {
-                facilityRequests.removeAll { it.id == created.id }
-                facilityRequests.add(0, created)
-            } else {
-                requests.removeAll { it.id == created.id }
-                requests.add(0, created)
-            }
+            requests.removeAll { it.id == created.id }
+            requests.add(0, created)
             onSaved(created.id)
         }
-    }
-
-    @Deprecated("Use the unified request form with an active facility and beneficiary details.")
-    fun createRequest(
-        group: String,
-        urgency: Urgency,
-        units: Int,
-        note: String,
-        onSaved: (String) -> Unit
-    ) {
-        val facilityId = profile?.facilityId.orEmpty()
-        createRequest(group, urgency, units, facilityId, false, null, null, note, onSaved)
     }
 
     fun updateSubmission(
@@ -555,27 +516,9 @@ class AppViewModel(
         }
     }
 
-    /** Demo only: stands in for a server/facility confirmation on the donor device. */
-    fun simulateFacilityConfirmation(incomingId: String, onSaved: (String) -> Unit) {
-        viewModelScope.launch {
-            onSaved(repository.simulateFacilityConfirmation(incomingId))
-        }
-    }
-
     // ---------- Coordination chat ----------
 
     fun send(text: String, mine: Boolean = true) { messages.add(ChatMessage(text, mine)) }
     fun clearMessages() = messages.clear()
 
-    fun reset(onDone: () -> Unit = {}) {
-        viewModelScope.launch {
-            repository.resetDemoProfile()
-            profile = null
-            pendingRole = null
-            available = true
-            languageState.value = "English"
-            messages.clear()
-            onDone()
-        }
-    }
 }

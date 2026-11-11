@@ -46,7 +46,7 @@ describe('Authentication HTTP endpoints', () => {
       refreshToken: 'private-refresh-cookie',
       user: {
         id: '29e4378f-85ab-4b4b-8ce3-6e721e45338a',
-        role: 'DONOR',
+        role: 'INDIVIDUAL',
         displayName: 'Amina Donor',
         phoneNumber: '+2348012345678',
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -58,7 +58,7 @@ describe('Authentication HTTP endpoints', () => {
       refreshToken: 'private-refresh-cookie',
       user: {
         id: '29e4378f-85ab-4b4b-8ce3-6e721e45338a',
-        role: 'DONOR',
+        role: 'INDIVIDUAL',
         displayName: 'Amina Donor',
         phoneNumber: '+2348012345678',
         createdAt: new Date('2026-01-01T00:00:00.000Z'),

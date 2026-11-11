@@ -16,7 +16,6 @@ import { PublicRoute } from '../../common/public-route.decorator';
 import { AuthService, AuthSession } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDonorDto } from './dto/register-donor.dto';
-import { RegisterHealthWorkerDto } from './dto/register-health-worker.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import {
@@ -40,7 +39,7 @@ export class AuthController {
 
   @Post('register')
   @PublicRoute()
-  @ApiOperation({ summary: 'Register an individual or health-worker account. Public registration cannot create administrators.' })
+  @ApiOperation({ summary: 'Register an individual account. Public registration cannot create administrators.' })
   @ApiResponse({ status: 201, description: 'Account created with its role-specific profile.' })
   async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) response: HeaderResponse) {
     return this.sessionResponse(await this.authService.register(dto), response);
@@ -53,17 +52,6 @@ export class AuthController {
   @ApiResponse({ status: 409, description: 'Phone number is already registered.' })
   async registerDonor(@Body() dto: RegisterDonorDto, @Res({ passthrough: true }) response: HeaderResponse) {
     return this.sessionResponse(await this.authService.registerDonor(dto), response);
-  }
-
-  @Post('register/health-worker')
-  @PublicRoute()
-  @ApiOperation({ summary: 'Register a health worker with pending professional verification.' })
-  @ApiResponse({ status: 201, description: 'Account created in pending verification state.' })
-  async registerHealthWorker(
-    @Body() dto: RegisterHealthWorkerDto,
-    @Res({ passthrough: true }) response: HeaderResponse,
-  ) {
-    return this.sessionResponse(await this.authService.registerHealthWorker(dto), response);
   }
 
   @Post('login')

@@ -33,7 +33,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.sistermesh.app.data.Role
 import com.sistermesh.app.ui.components.*
 import com.sistermesh.app.ui.theme.*
 import java.util.Locale
@@ -46,7 +45,6 @@ private val RecognitionLanguages = listOf(
 
 @Composable
 fun VoiceSheet(
-    role: Role,
     onTranscriptConfirmed: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -318,8 +316,7 @@ fun VoiceSheet(
             Text("Offline voice request", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(6.dp))
             Text(
-                if (role == Role.CHW) "Say the blood group, number of units, and facility."
-                else "Describe the blood request you want to create.",
+                "Describe the blood request you want to create.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Muted,
                 textAlign = TextAlign.Center

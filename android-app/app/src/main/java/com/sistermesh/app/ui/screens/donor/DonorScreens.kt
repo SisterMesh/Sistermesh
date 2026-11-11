@@ -127,7 +127,6 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(28.dp))
     }
     if (voice) VoiceSheet(
-        role = Role.INDIVIDUAL,
         onTranscriptConfirmed = { transcript ->
             vm.stageVoiceRequestTranscript(transcript)
             voice = false

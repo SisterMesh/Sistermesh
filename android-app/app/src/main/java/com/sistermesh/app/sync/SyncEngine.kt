@@ -27,7 +27,6 @@ enum class SyncOutcome {
     ACCOUNT_LINK_REQUIRED,
     ACCOUNT_MISMATCH,
     PROFILE_INCOMPLETE,
-    VERIFICATION_PENDING,
     DEVICE_REVOKED,
     RETRY,
     FAILED
@@ -61,11 +60,6 @@ class SyncEngine(
             }
             if (user.status != "ACTIVE") {
                 return finish(SyncOutcome.NEEDS_SIGN_IN, "This account is not active.")
-            }
-            if (user.role == "HEALTH_WORKER" &&
-                (user.healthWorkerVerificationStatus != "VERIFIED" || user.healthWorkerFacilityId.isNullOrBlank())
-            ) {
-                return finish(SyncOutcome.VERIFICATION_PENDING, "Health-worker verification and facility assignment are required before syncing.")
             }
             if (user.role == "INDIVIDUAL") syncDonorProfile(profile, user)
 
@@ -111,9 +105,7 @@ class SyncEngine(
                 return finish(SyncOutcome.DEVICE_REVOKED, "This phone was revoked. Its queued data remains local.")
             }
             if (error.statusCode == 403) {
-                val profile = database.profileDao().get()
-                val outcome = if (profile?.role == "CHW") SyncOutcome.VERIFICATION_PENDING else SyncOutcome.PROFILE_INCOMPLETE
-                return finish(outcome, error.message)
+                return finish(SyncOutcome.PROFILE_INCOMPLETE, error.message)
             }
             if (error.isRetryable) return finish(SyncOutcome.RETRY, "A temporary server error occurred. Sync will retry.")
             if (error.statusCode == 404) {
@@ -150,13 +142,6 @@ class SyncEngine(
     }
 
     suspend fun pendingCount(): Int = database.syncEventDao().pendingCountNow()
-
-    suspend fun refreshFacilities() {
-        val facilities = api.listFacilities()
-        database.facilityDao().upsertAll(
-            facilities.map { com.sistermesh.app.data.local.FacilityEntity(it.id, it.name, it.locality, it.state) }
-        )
-    }
 
     private suspend fun uploadPending(clientDeviceId: String, accountId: String, serverDeviceId: String): SyncOutcome {
         database.syncEventDao().unblockForAccount(accountId, clientDeviceId)
@@ -447,16 +432,16 @@ class SyncEngine(
             val bloodGroup = mapBloodGroup(serverRequest.requestedBloodGroup)
             val urgency = serverRequest.urgency.takeIf { it == "CRITICAL" || it == "URGENT" }
                 ?: throw BackendProtocolException("The server returned an unsupported urgency.")
-            val facility = listOf(serverRequest.facilityName, serverRequest.facilityLocality, serverRequest.facilityState)
+            val facility = serverRequest.facilityName
+                .ifBlank { listOf(serverRequest.facilityName, serverRequest.facilityLocality, serverRequest.facilityState)
                 .filter(String::isNotBlank)
                 .distinct()
                 .joinToString(", ")
-                .ifBlank { "Health facility" }
+                .ifBlank { "Health facility" } }
             val current = existing
-            val canSeePrivateDetails = serverRequest.isMine || user.role == "HEALTH_WORKER"
+            val canSeePrivateDetails = serverRequest.isMine
             val publishedToDonors = status == "OPEN" || status == "PARTIALLY_FILLED"
             val requestKind = when {
-                user.role == "HEALTH_WORKER" -> "FACILITY"
                 serverRequest.isMine -> "OUTGOING"
                 publishedToDonors -> "INCOMING"
                 else -> "HIDDEN"
@@ -482,6 +467,9 @@ class SyncEngine(
                 urgency = if (preserveLocalEdits) current?.urgency ?: urgency else urgency,
                 units = if (preserveLocalEdits) current?.units ?: serverRequest.units else serverRequest.units,
                 facility = facility,
+                facilityLocation = serverRequest.facilityLocation.ifBlank { serverRequest.facilityLocality },
+                facilityLatitude = serverRequest.facilityLatitude,
+                facilityLongitude = serverRequest.facilityLongitude,
                 facilityId = serverRequest.facilityId.ifBlank { current?.facilityId.orEmpty() }.takeIf { it.isNotBlank() },
                 isForSelf = if (!canSeePrivateDetails) true else if (preserveLocalEdits) {
                     current?.isForSelf ?: serverRequest.isForSelf ?: true
@@ -621,7 +609,6 @@ class SyncEngine(
             SyncOutcome.ACCOUNT_LINK_REQUIRED -> "ACCOUNT_LINK_REQUIRED"
             SyncOutcome.ACCOUNT_MISMATCH -> "ACCOUNT_MISMATCH"
             SyncOutcome.PROFILE_INCOMPLETE -> "PROFILE_INCOMPLETE"
-            SyncOutcome.VERIFICATION_PENDING -> "VERIFICATION_PENDING"
             SyncOutcome.DEVICE_REVOKED -> "DEVICE_REVOKED"
             SyncOutcome.RETRY -> "RETRYING"
             SyncOutcome.FAILED -> "FAILED"
@@ -677,8 +664,7 @@ class SyncEngine(
             val group = mapBloodGroup(snapshot.requestedBloodGroup)
             val urgency = snapshot.urgency.takeIf { it == "CRITICAL" || it == "URGENT" }
                 ?: throw BackendProtocolException("The server returned an unsupported urgency.")
-            val facility = listOf(snapshot.facilityName, snapshot.facilityLocality, snapshot.facilityState)
-                .filter(String::isNotBlank).distinct().joinToString(", ").ifBlank { "Health facility" }
+            val facility = snapshot.facilityName.ifBlank { "Health facility" }
             val decision = when (response.status) {
                 "ACCEPTED", "CONFIRMED" -> "ACCEPTED"
                 "DECLINED" -> "DECLINED"
@@ -693,6 +679,9 @@ class SyncEngine(
                 urgency = urgency,
                 units = snapshot.units,
                 facility = facility,
+                facilityLocation = snapshot.facilityLocation.ifBlank { snapshot.facilityLocality },
+                facilityLatitude = snapshot.facilityLatitude,
+                facilityLongitude = snapshot.facilityLongitude,
                 createdAt = snapshot.createdAt,
                 status = status,
                 receivedAt = displayTime(response.respondedAt ?: response.createdAt),
@@ -790,7 +779,7 @@ class SyncEngine(
 
     private fun String.toBackendRole(): String = when (this) {
         "INDIVIDUAL" -> "INDIVIDUAL"
-        "CHW" -> "HEALTH_WORKER"
+        "CHW" -> "INDIVIDUAL"
         else -> throw IllegalArgumentException("Unsupported local profile role.")
     }
 

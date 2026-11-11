@@ -95,6 +95,10 @@ class MeshRepository(
                 .put("urgency", request.urgency)
                 .put("units", request.units)
                 .put("publicationStatus", request.status)
+                .put("facilityName", request.facility.take(120))
+                .put("facilityLocation", request.facilityLocation.take(240))
+                .put("facilityLatitude", request.facilityLatitude ?: JSONObject.NULL)
+                .put("facilityLongitude", request.facilityLongitude ?: JSONObject.NULL)
                 .toString()
         } else event.payloadJson
         val isDonorAction = event.eventType in setOf(
@@ -522,13 +526,16 @@ class MeshRepository(
                         urgency = payload.getString("urgency"),
                         units = payload.getInt("units"),
                         facility = packet.displayFacility ?: "Nearby health facility",
+                        facilityLocation = payload.optString("facilityLocation"),
+                        facilityLatitude = payload.optNullableDouble("facilityLatitude"),
+                        facilityLongitude = payload.optNullableDouble("facilityLongitude"),
                         createdAt = packet.originCreatedAt,
                         updatedAt = packet.originCreatedAt,
                         status = if (payload.optString("publicationStatus") in setOf(
                                 RequestStatus.OPEN.name,
                                 RequestStatus.PARTIALLY_FILLED.name
                             )
-                        ) payload.optString("publicationStatus") else RequestStatus.PENDING_FACILITY_VERIFICATION.name,
+                        ) payload.optString("publicationStatus") else RequestStatus.OPEN.name,
                         receivedAt = "Just now",
                         expiresIn = "Expires in 30 min",
                         decision = Decision.NONE.name,
@@ -618,6 +625,9 @@ class MeshRepository(
             )
         )
     }
+
+    private fun JSONObject.optNullableDouble(key: String): Double? =
+        if (!has(key) || isNull(key)) null else optDouble(key).takeIf(Double::isFinite)
 
     private fun messageExpiry(payloadJson: String, now: Instant): Instant {
         val default = now.plus(Duration.ofMinutes(MESH_TTL_MINUTES))

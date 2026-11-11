@@ -24,7 +24,7 @@ export class RegisterDto {
   password!: string;
 
   // Public registration intentionally cannot request ADMIN.
-  @ApiProperty({ enum: ['INDIVIDUAL', 'HEALTH_WORKER'], example: 'INDIVIDUAL' })
-  @IsIn(['INDIVIDUAL', 'DONOR', 'HEALTH_WORKER'])
-  role!: 'INDIVIDUAL' | 'DONOR' | 'HEALTH_WORKER';
+  @ApiProperty({ enum: ['INDIVIDUAL'], example: 'INDIVIDUAL' })
+  @IsIn(['INDIVIDUAL'])
+  role!: 'INDIVIDUAL';
 }

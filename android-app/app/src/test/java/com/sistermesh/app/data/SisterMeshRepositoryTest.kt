@@ -9,6 +9,7 @@ import com.sistermesh.app.data.local.MIGRATION_1_2
 import com.sistermesh.app.data.local.MIGRATION_2_3
 import com.sistermesh.app.data.local.MIGRATION_3_4
 import com.sistermesh.app.data.local.MIGRATION_4_5
+import com.sistermesh.app.data.local.MIGRATION_5_6
 import com.sistermesh.app.data.local.EmergencyRequestEntity
 import com.sistermesh.app.data.local.ProfileEntity
 import com.sistermesh.app.data.local.SisterMeshDatabase
@@ -515,6 +516,80 @@ class SisterMeshRepositoryTest {
             syncTables.close()
         } finally {
             helper.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
+    fun requestMigrationFromV5PreservesRowsAndRemovesLegacyWorkerFlow() = runBlocking {
+        val name = "room-v5-to-v6-${UUID.randomUUID()}"
+        val profile = ProfileEntity(
+            role = "CHW",
+            name = "Legacy account",
+            bloodGroup = "O-",
+            area = "Lagos",
+            phone = "+2348012345678",
+            facility = "Old clinic",
+            facilityLocation = "",
+            designation = "Nurse"
+        )
+        val request = EmergencyRequestEntity(
+            localId = "legacy-facility-request",
+            kind = "FACILITY",
+            bloodGroup = "O-",
+            urgency = "URGENT",
+            units = 2,
+            note = "Preserve this note",
+            facility = "Old clinic, Lagos",
+            facilityId = "legacy-facility-id",
+            beneficiaryName = "Private person",
+            additionalInfo = "Keep this data",
+            reviewedAt = null,
+            createdAt = "2026-11-10T09:00:00Z",
+            status = "PENDING_FACILITY_VERIFICATION",
+            syncStatus = "PENDING",
+            lastServerCursor = "17"
+        )
+        var upgraded: SisterMeshDatabase? = null
+        try {
+            fileDatabase(name).use { database ->
+                database.profileDao().upsert(profile)
+                database.emergencyRequestDao().upsert(request)
+            }
+
+            // Recreate the prior v5 schema, then run Room's real 5→6 migration.
+            context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null).use { legacy ->
+                legacy.execSQL("ALTER TABLE `profiles` DROP COLUMN `useMode`")
+                legacy.execSQL("ALTER TABLE `emergency_requests` DROP COLUMN `facilityLocation`")
+                legacy.execSQL("ALTER TABLE `emergency_requests` DROP COLUMN `facilityLatitude`")
+                legacy.execSQL("ALTER TABLE `emergency_requests` DROP COLUMN `facilityLongitude`")
+                legacy.version = 5
+            }
+
+            upgraded = Room.databaseBuilder(context, SisterMeshDatabase::class.java, name)
+                .addMigrations(MIGRATION_5_6)
+                .allowMainThreadQueries()
+                .build()
+
+            val migratedProfile = upgraded.profileDao().get()
+            val migratedRequest = upgraded.emergencyRequestDao().get(request.localId)
+            assertEquals(6, upgraded.openHelper.writableDatabase.version)
+            assertEquals(profile.copy(role = "INDIVIDUAL"), migratedProfile)
+            assertEquals("OUTGOING", migratedRequest?.kind)
+            assertEquals("OPEN", migratedRequest?.status)
+            assertEquals(request.facility, migratedRequest?.facility)
+            assertEquals(request.note, migratedRequest?.note)
+            assertEquals(request.beneficiaryName, migratedRequest?.beneficiaryName)
+            assertEquals(request.additionalInfo, migratedRequest?.additionalInfo)
+            assertEquals(request.lastServerCursor, migratedRequest?.lastServerCursor)
+            assertEquals("", migratedRequest?.facilityLocation)
+            assertNull(migratedRequest?.facilityLatitude)
+            assertNull(migratedRequest?.facilityLongitude)
+            assertNull(migratedRequest?.reviewedAt)
+            assertEquals(1, upgraded.profileDao().count())
+            assertEquals(1, upgraded.emergencyRequestDao().count())
+        } finally {
+            upgraded?.close()
             context.deleteDatabase(name)
         }
     }

@@ -29,27 +29,15 @@ import com.sistermesh.app.ui.theme.*
 // S13
 @Composable
 fun CoordinationScreen(vm: AppViewModel, nav: NavController, id: String, ref: String) {
-    val p = vm.profile ?: return
-    val isChw = p.role == Role.CHW
-    val req = if (isChw) vm.request(id) else null
-    val inc = if (!isChw) vm.incomingById(id) else null
-    val replies = if (isChw) MockData.chwQuickReplies else MockData.donorQuickReplies
-    val group = req?.bloodGroup ?: inc?.bloodGroup.orEmpty()
-    val facility = req?.facility ?: inc?.facility.orEmpty()
+    val inc = vm.incomingById(id)
+    val replies = MockData.donorQuickReplies
+    val group = inc?.bloodGroup.orEmpty()
+    val facility = inc?.facility.orEmpty()
 
     Page(footer = {
-        if (isChw) {
-            SmButton("Record donation", { nav.navigate("confirm/$id/$ref") }, icon = Icons.Rounded.Check)
-        } else {
-            SmButton("Back to home", { nav.navigate("home") { popUpTo("home") { inclusive = true } } })
-            TextButtonDemo("Demo: facility confirms my donation") {
-                vm.simulateFacilityConfirmation(id) { rid ->
-                    nav.navigate("receipt/$rid") { popUpTo("home") }
-                }
-            }
-        }
+        SmButton("Back to home", { nav.navigate("home") { popUpTo("home") { inclusive = true } } })
     }) {
-        BackHeader(if (isChw) "Coordinate" else "You're helping", { nav.popBackStack() })
+        BackHeader("You're helping", { nav.popBackStack() })
         Spacer(Modifier.height(12.dp))
         SmCard(tint = MintSoft, border = Mint) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -58,8 +46,8 @@ fun CoordinationScreen(vm: AppViewModel, nav: NavController, id: String, ref: St
                 }
                 Spacer(Modifier.width(14.dp))
                 Column {
-                    Text(if (isChw) "Sister #$ref has agreed to help." else "Thank you for saying yes.", style = MaterialTheme.typography.titleMedium, color = Teal)
-                    Text(if (isChw) "Agree the next steps with her below." else "Follow the facility's instructions.", style = MaterialTheme.typography.bodyMedium, color = Teal)
+                    Text("Thank you for saying yes.", style = MaterialTheme.typography.titleMedium, color = Teal)
+                    Text("Follow the donation location instructions.", style = MaterialTheme.typography.bodyMedium, color = Teal)
                 }
             }
         }
@@ -68,7 +56,10 @@ fun CoordinationScreen(vm: AppViewModel, nav: NavController, id: String, ref: St
             InfoRow("Blood group", group)
             HairLine()
             InfoRow("Facility", facility)
-            if (isChw) { HairLine(); InfoRow("Facility location", p.facilityLocation) }
+            if (inc?.facilityLocation?.isNotBlank() == true) {
+                HairLine()
+                InfoRow("Facility location", inc.facilityLocation)
+            }
         }
         Spacer(Modifier.height(14.dp))
         Notice("Acceptance does not guarantee medical eligibility or that a donation will happen. Screening decides.")
@@ -99,11 +90,6 @@ fun CoordinationScreen(vm: AppViewModel, nav: NavController, id: String, ref: St
         }
         Spacer(Modifier.height(16.dp))
     }
-}
-
-@Composable
-private fun TextButtonDemo(text: String, onClick: () -> Unit) {
-    TextButton(onClick, Modifier.fillMaxWidth()) { Text(text, color = Muted, style = MaterialTheme.typography.labelMedium) }
 }
 
 // S15
@@ -173,14 +159,7 @@ fun HistoryScreen(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(18.dp))
         Text("History", style = MaterialTheme.typography.headlineLarge)
         Spacer(Modifier.height(8.dp))
-        if (p.role == Role.CHW) {
-            Text("Every request you've sent.", style = MaterialTheme.typography.bodyLarge, color = Muted)
-            SectionTitle("Requests")
-            vm.requests.forEach {
-                RequestRow(it) { nav.navigate(if (it.status == RequestStatus.SEARCHING) "broadcast/${it.id}" else "tracking/${it.id}") }
-                Spacer(Modifier.height(10.dp))
-            }
-        } else {
+        run {
             Text("Requests you received and the receipts you hold.", style = MaterialTheme.typography.bodyLarge, color = Muted)
             SectionTitle("Consent receipts")
             if (vm.receipts.isEmpty()) Text("No receipts yet.", style = MaterialTheme.typography.bodyMedium, color = Muted)
@@ -228,7 +207,7 @@ fun HistoryScreen(vm: AppViewModel, nav: NavController) {
 fun ProfileScreen(vm: AppViewModel, nav: NavController) {
     val p = vm.profile ?: return
     var voice by remember { mutableStateOf(false) }
-    var confirmReset by remember { mutableStateOf(false) }
+    var confirmLogout by remember { mutableStateOf(false) }
 
     Page(bottomBar = { TabBar("profile", nav) }) {
         Spacer(Modifier.height(18.dp))
@@ -240,26 +219,18 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
             Column {
                 Text(p.name, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(4.dp))
-                Tag(if (p.role == Role.INDIVIDUAL) "Individual" else "Healthcare worker", Tone.Good, if (p.role == Role.INDIVIDUAL) Icons.Rounded.Person else Icons.Rounded.LocalHospital)
+                Tag(if (p.useMode == UseMode.DONATE_BLOOD) "Donate blood" else "Find blood", Tone.Good, if (p.useMode == UseMode.DONATE_BLOOD) Icons.Rounded.Favorite else Icons.Rounded.Search)
             }
         }
         Spacer(Modifier.height(22.dp))
         SmCard {
-            if (p.role == Role.INDIVIDUAL) {
-                InfoRow("Blood group", p.bloodGroup)
-                HairLine()
-                InfoRow("Area", p.area)
-                HairLine()
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Available for requests", style = MaterialTheme.typography.bodyMedium, color = Muted, modifier = Modifier.weight(1f))
-                    SmSwitch(vm.available, { vm.updateAvailability(it) })
-                }
-            } else {
-                InfoRow("Facility", p.facility)
-                HairLine()
-                InfoRow("Location", p.facilityLocation)
-                HairLine()
-                InfoRow("Role", p.designation)
+            InfoRow("Blood group", p.bloodGroup.ifBlank { "Not set" })
+            HairLine()
+            InfoRow("Area", p.area.ifBlank { "Not set" })
+            HairLine()
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Available to donate", style = MaterialTheme.typography.bodyMedium, color = Muted, modifier = Modifier.weight(1f))
+                SmSwitch(vm.available, { vm.updateAvailability(it) })
             }
         }
 
@@ -277,18 +248,16 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
 
         SectionTitle("Privacy")
         Notice(
-            if (p.role == Role.INDIVIDUAL) "Your contact details are not shared with donors. You can choose whether to join the donor network."
-            else "Broadcasts never include patient names or identifiable medical information.",
+            "Your contact details and patient information are not shared with donors.",
             Icons.Rounded.Lock, Tone.Good
         )
 
         Spacer(Modifier.height(24.dp))
-        SmButton("Reset demo profile", { confirmReset = true }, style = BtnStyle.Outline, icon = Icons.AutoMirrored.Rounded.Logout)
+        SmButton("Logout", { confirmLogout = true }, style = BtnStyle.Outline, icon = Icons.AutoMirrored.Rounded.Logout)
         Spacer(Modifier.height(28.dp))
     }
 
     if (voice) VoiceSheet(
-        role = p.role,
         onTranscriptConfirmed = { transcript ->
             vm.stageVoiceRequestTranscript(transcript)
             voice = false
@@ -296,20 +265,20 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
         },
         onDismiss = { voice = false }
     )
-    if (confirmReset) AlertDialog(
-        onDismissRequest = { confirmReset = false },
+    if (confirmLogout) AlertDialog(
+        onDismissRequest = { confirmLogout = false },
         containerColor = Paper,
-        title = { Text("Reset demo profile?") },
-        text = { Text("This clears your profile and sample data, and returns you to the start.") },
+        title = { Text("Log out?") },
+        text = { Text("You’ll be signed out. Requests and donation records on this phone will remain saved.") },
         confirmButton = {
             TextButton({
-                confirmReset = false
-                vm.reset {
+                confirmLogout = false
+                vm.logout {
                     nav.navigate("welcome") { popUpTo(nav.graph.id) { inclusive = true } }
                 }
-            }) { Text("Reset", color = Coral) }
+            }) { Text("Logout", color = Coral) }
         },
-        dismissButton = { TextButton({ confirmReset = false }) { Text("Cancel", color = Muted) } }
+        dismissButton = { TextButton({ confirmLogout = false }) { Text("Cancel", color = Muted) } }
     )
 }
 

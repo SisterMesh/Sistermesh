@@ -188,3 +188,17 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
         db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `reviewedAt` TEXT")
     }
 }
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `profiles` ADD COLUMN `useMode` TEXT NOT NULL DEFAULT 'FIND_BLOOD'")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `facilityLocation` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `facilityLatitude` REAL")
+        db.execSQL("ALTER TABLE `emergency_requests` ADD COLUMN `facilityLongitude` REAL")
+        db.execSQL("UPDATE `profiles` SET `role` = 'INDIVIDUAL', `useMode` = 'FIND_BLOOD' WHERE `role` = 'CHW'")
+        db.execSQL("UPDATE `emergency_requests` SET `kind` = 'OUTGOING' WHERE `kind` = 'FACILITY'")
+        db.execSQL(
+            "UPDATE `emergency_requests` SET `status` = 'OPEN' WHERE `status` IN ('PENDING_FACILITY_VERIFICATION', 'NEEDS_INFORMATION')"
+        )
+    }
+}

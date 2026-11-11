@@ -28,7 +28,6 @@ class SyncWorker(
             SyncOutcome.ACCOUNT_LINK_REQUIRED,
             SyncOutcome.ACCOUNT_MISMATCH,
             SyncOutcome.PROFILE_INCOMPLETE,
-            SyncOutcome.VERIFICATION_PENDING,
             SyncOutcome.DEVICE_REVOKED,
             SyncOutcome.FAILED -> Result.success()
             SyncOutcome.RETRY -> Result.retry()

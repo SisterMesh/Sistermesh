@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.LocalHospital
 import androidx.compose.material.icons.rounded.Mic
@@ -32,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.sistermesh.app.data.AppViewModel
@@ -40,8 +40,10 @@ import com.sistermesh.app.data.Decision
 import com.sistermesh.app.data.RequestStatus
 import com.sistermesh.app.data.Role
 import com.sistermesh.app.data.Urgency
+import com.sistermesh.app.data.UseMode
 import com.sistermesh.app.ui.components.BackHeader
 import com.sistermesh.app.ui.components.BloodGroupPicker
+import com.sistermesh.app.ui.components.FacilityMapPicker
 import com.sistermesh.app.ui.components.CheckRow
 import com.sistermesh.app.ui.components.NetworkPill
 import com.sistermesh.app.ui.components.Notice
@@ -66,16 +68,12 @@ import com.sistermesh.app.voice.RequestVoiceParser
 
 @Composable
 fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
-    val isWorker = vm.profile?.role == Role.CHW
-    val pending = vm.facilityRequests.count {
-        it.status == RequestStatus.PENDING_FACILITY_VERIFICATION ||
-            it.status == RequestStatus.NEEDS_INFORMATION
-    }
+    val donorMode = vm.profile?.useMode == UseMode.DONATE_BLOOD
     Page(bottomBar = { TabBar("home", nav) }) {
         Spacer(Modifier.height(18.dp))
-        Text(if (isWorker) "Facility coordination" else "SisterMesh", style = MaterialTheme.typography.headlineLarge, color = Ink)
+        Text(if (donorMode) "Donate blood" else "Find blood", style = MaterialTheme.typography.headlineLarge, color = Ink)
         Text(
-            if (isWorker) "Review requests from your assigned facility." else "Request blood or volunteer to donate, with one account.",
+            if (donorMode) "See nearby requests and choose whether you can help." else "Create a request for yourself or someone else.",
             style = MaterialTheme.typography.bodyLarge,
             color = Muted
         )
@@ -83,49 +81,35 @@ fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
         NetworkPill(vm.meshState)
         if (!vm.isOnline) {
             Spacer(Modifier.height(10.dp))
-            Notice("Offline mode is on. New requests stay private until a facility verifies them.")
+            Notice("Offline mode is on. Requests are saved on this phone and shared with nearby donors.")
         }
-
-        if (isWorker) {
-            SectionTitle("Facility requests")
+        if (!donorMode) {
+            SectionTitle("Need blood?")
             SmCard {
-                Text("$pending waiting for review", style = MaterialTheme.typography.titleLarge, color = Teal)
-                Text("Only requests assigned to your verified facility appear in this queue.", color = Muted)
-                Spacer(Modifier.height(14.dp))
-                SmButton("Open review queue", { nav.navigate("facility_requests") })
-            }
-            SectionTitle("Create a facility request")
-            SmCard {
-                Text("Submit a request for facility verification.", color = Muted)
+                Text("Create a blood request", style = MaterialTheme.typography.titleLarge)
+                Text("Add the donation facility and location so donors know where to go.", color = Muted)
                 Spacer(Modifier.height(12.dp))
-                SmButton("Create request", { nav.navigate("create_request") }, icon = Icons.Rounded.LocalHospital)
+                SmButton("Request blood", { nav.navigate("create_request") }, icon = Icons.Rounded.LocalHospital)
             }
         } else {
-            SectionTitle("What do you need today?")
+            SectionTitle("Ready to help?")
             SmCard {
-                Text("Request blood", style = MaterialTheme.typography.titleLarge)
-                Text("Choose a facility. Its staff will review your request before donors can see it.", color = Muted)
+                Text("Find blood requests", style = MaterialTheme.typography.titleLarge)
+                Text("Review the blood group, units, and donation location before responding.", color = Muted)
                 Spacer(Modifier.height(12.dp))
-                SmButton("Start a request", { nav.navigate("create_request") }, icon = Icons.Rounded.LocalHospital)
+                SmButton("Browse requests", { nav.navigate("find_blood") }, icon = Icons.Rounded.Favorite)
             }
-            Spacer(Modifier.height(12.dp))
-            SmCard {
-                Text("Looking to help?", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    if (vm.profile?.bloodGroup.isNullOrBlank()) "Join the donor network when you are ready."
-                    else "See approved requests and choose when you can help.",
-                    color = Muted
-                )
-                Spacer(Modifier.height(12.dp))
-                SmButton(
-                    if (vm.profile?.bloodGroup.isNullOrBlank()) "Explore donating" else "Find blood requests",
-                    { nav.navigate(if (vm.profile?.bloodGroup.isNullOrBlank()) "donate" else "find_blood") },
-                    style = com.sistermesh.app.ui.components.BtnStyle.Soft,
-                    icon = Icons.Rounded.Favorite
-                )
-            }
+        }
+        if (donorMode) {
             SectionTitle("Your activity", action = "View all", onAction = { nav.navigate("activity") })
-            Text("${vm.requests.size} requests · ${vm.incoming.count { it.decision != Decision.NONE }} donation responses", color = Muted)
+            Text("${vm.incoming.size} requests · ${vm.incoming.count { it.decision != Decision.NONE }} responses", color = Muted)
+        } else {
+            SectionTitle("Want to donate too?")
+            SmCard {
+                Text("You can volunteer as a donor at any time.", color = Muted)
+                Spacer(Modifier.height(10.dp))
+                SmButton("Donate blood", { nav.navigate("donate") }, style = com.sistermesh.app.ui.components.BtnStyle.Soft, icon = Icons.Rounded.Favorite)
+            }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -139,23 +123,20 @@ fun FindBloodScreen(vm: AppViewModel, nav: NavController) {
     Page(bottomBar = { TabBar("find_blood", nav) }) {
         Spacer(Modifier.height(18.dp))
         Text("Find blood", style = MaterialTheme.typography.headlineLarge)
-        Text("Only facility-approved requests are shown here.", color = Muted)
+        Text("Review the facility and location before choosing to help.", color = Muted)
         Spacer(Modifier.height(12.dp))
         NetworkPill(vm.meshState)
-        if (vm.profile?.role == Role.CHW) {
+        if (vm.profile?.bloodGroup.isNullOrBlank()) {
             Spacer(Modifier.height(14.dp))
-            Notice("Donor participation uses an individual account. This verified health-worker account remains separate.")
-        } else if (vm.profile?.bloodGroup.isNullOrBlank()) {
-            Spacer(Modifier.height(14.dp))
-            Notice("Join the donor network in Donate to respond to requests.")
+            Notice("Add your blood group and consent on the Donate tab to respond.")
             Spacer(Modifier.height(10.dp))
             SmButton("Set up donor profile", { nav.navigate("donate") })
         } else {
             SectionTitle("${requests.size} open requests")
             if (requests.isEmpty()) {
                 SmCard {
-                    Text("No matching approved requests yet.", style = MaterialTheme.typography.titleMedium)
-                    Text("You can check again later. Pending facility reviews are never shown in this list.", color = Muted)
+                    Text("No matching requests yet.", style = MaterialTheme.typography.titleMedium)
+                    Text("Check again when nearby requests arrive.", color = Muted)
                 }
             } else {
                 requests.forEach { request ->
@@ -168,6 +149,7 @@ fun FindBloodScreen(vm: AppViewModel, nav: NavController) {
                         Text("${request.urgency.name.lowercase().replaceFirstChar(Char::uppercase)} · ${request.units} unit${if (request.units == 1) "" else "s"}", color = Muted)
                         Spacer(Modifier.height(4.dp))
                         Text(request.facility, style = MaterialTheme.typography.bodyMedium)
+                        if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
                     }
                     Spacer(Modifier.height(10.dp))
                 }
@@ -193,12 +175,7 @@ fun DonateScreen(vm: AppViewModel, nav: NavController) {
         Text("Donate", style = MaterialTheme.typography.headlineLarge)
         Text("Donating is optional. You decide which requests to answer.", color = Muted)
         Spacer(Modifier.height(18.dp))
-        if (profile?.role == Role.CHW) {
-            SmCard {
-                Text("Donor accounts are separate", style = MaterialTheme.typography.titleLarge)
-                Text("This verified health-worker account is for facility coordination. Use an individual account to volunteer as a donor.", color = Muted)
-            }
-        } else if (!joined) {
+        if (!joined) {
             SmCard {
                 Text("Join the voluntary donor network", style = MaterialTheme.typography.titleLarge)
                 Text("Your blood group is shared only to find compatible requests. Donors never see patient name or contact details.", color = Muted)
@@ -249,14 +226,13 @@ fun DonateScreen(vm: AppViewModel, nav: NavController) {
 
 @Composable
 fun ActivityScreen(vm: AppViewModel, nav: NavController) {
-    val isWorker = vm.profile?.role == Role.CHW
-    val outgoing = if (isWorker) vm.facilityRequests else vm.requests
+    val outgoing = vm.requests
     val donations = vm.incoming.filter { it.decision != Decision.NONE || it.confirmed }
     Page(bottomBar = { TabBar("activity", nav) }) {
         Spacer(Modifier.height(18.dp))
         Text("My activity", style = MaterialTheme.typography.headlineLarge)
         Text("Requests and donation responses stay available on this device.", color = Muted)
-        SectionTitle(if (isWorker) "Facility request history" else "My requests")
+        SectionTitle("My requests")
         if (outgoing.isEmpty()) {
             SmCard { Text("No requests yet.", color = Muted) }
         } else outgoing.forEach { request ->
@@ -268,7 +244,7 @@ fun ActivityScreen(vm: AppViewModel, nav: NavController) {
                 }
                 Text("${request.units} unit${if (request.units == 1) "" else "s"} · ${request.facility}", color = Muted)
                 request.reviewReason?.let { Text(it, color = Coral) }
-                if (!isWorker && request.status == RequestStatus.NEEDS_INFORMATION) {
+                if (request.status == RequestStatus.NEEDS_INFORMATION) {
                     Spacer(Modifier.height(10.dp))
                     SmButton("Update request", { nav.navigate("edit_request/${request.id}") }, style = com.sistermesh.app.ui.components.BtnStyle.Soft)
                 }
@@ -279,11 +255,10 @@ fun ActivityScreen(vm: AppViewModel, nav: NavController) {
             }
             Spacer(Modifier.height(8.dp))
         }
-        if (!isWorker) {
-            SectionTitle("My donation responses")
-            if (donations.isEmpty()) {
-                SmCard { Text("No donation responses yet.", color = Muted) }
-            } else donations.forEach { request ->
+        SectionTitle("My donation responses")
+        if (donations.isEmpty()) {
+            SmCard { Text("No donation responses yet.", color = Muted) }
+        } else donations.forEach { request ->
                 SmCard(onClick = { nav.navigate("incoming/${request.id}") }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(request.bloodGroup, style = MaterialTheme.typography.titleMedium)
@@ -296,93 +271,8 @@ fun ActivityScreen(vm: AppViewModel, nav: NavController) {
                     Text(request.facility, color = Muted)
                 }
                 Spacer(Modifier.height(8.dp))
-            }
         }
         Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-fun FacilityReviewScreen(vm: AppViewModel, nav: NavController) {
-    val pending = vm.facilityRequests.filter {
-        it.status == RequestStatus.PENDING_FACILITY_VERIFICATION || it.status == RequestStatus.NEEDS_INFORMATION
-    }
-    Page(bottomBar = { TabBar("home", nav) }) {
-        BackHeader("Facility review", { nav.popBackStack() })
-        Text("Requests assigned to your verified facility", color = Muted)
-        if (vm.profile?.facilityId.isNullOrBlank()) {
-            Spacer(Modifier.height(12.dp))
-            Notice("A verified facility assignment is required to access this queue.")
-        }
-        SectionTitle("${pending.size} awaiting review")
-        if (pending.isEmpty()) {
-            SmCard { Text("No requests awaiting review.", color = Muted) }
-        } else pending.forEach { request ->
-            SmCard(onClick = { nav.navigate("review_request/${request.id}") }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(request.bloodGroup, style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.weight(1f))
-                    Tag(request.status.label, request.status.tone(), request.status.icon())
-                }
-                Text("${request.urgency.name} · ${request.units} unit${if (request.units == 1) "" else "s"}", color = Muted)
-                Text(if (request.isForSelf) "For requester" else "For ${request.beneficiaryName ?: "another person"}", color = Muted)
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-fun RequestReviewScreen(vm: AppViewModel, nav: NavController, requestId: String) {
-    val request = vm.request(requestId)
-    var reason by remember(requestId) { mutableStateOf("") }
-    var tried by remember(requestId) { mutableStateOf(false) }
-    Page(footer = {
-        SmButton("Approve request", {
-            request?.serverUpdatedAt?.let { vm.reviewRequest(requestId, "APPROVE", null, it) }
-            nav.popBackStack()
-        }, enabled = request?.serverUpdatedAt != null)
-        SmButton("Request more information", {
-            tried = true
-            if (reason.isNotBlank()) {
-                request?.serverUpdatedAt?.let { vm.reviewRequest(requestId, "REQUEST_INFORMATION", reason, it) }
-                nav.popBackStack()
-            }
-        }, style = com.sistermesh.app.ui.components.BtnStyle.Outline, enabled = request?.serverUpdatedAt != null && reason.isNotBlank())
-        SmButton("Reject request", {
-            tried = true
-            if (reason.isNotBlank()) {
-                request?.serverUpdatedAt?.let { vm.reviewRequest(requestId, "REJECT", reason, it) }
-                nav.popBackStack()
-            }
-        }, style = com.sistermesh.app.ui.components.BtnStyle.Danger, enabled = request?.serverUpdatedAt != null && reason.isNotBlank())
-    }) {
-        BackHeader("Review request", { nav.popBackStack() })
-        if (request == null) {
-            Notice("This request is not available on this device.")
-        } else {
-            Tag(request.status.label, request.status.tone(), request.status.icon())
-            SectionTitle("Request details")
-            Text("${request.bloodGroup} · ${request.urgency.name} · ${request.units} unit${if (request.units == 1) "" else "s"}")
-            Text(request.facility, color = Muted)
-            SectionTitle("Beneficiary")
-            Text(if (request.isForSelf) "The requester is the patient." else request.beneficiaryName ?: "Name not provided")
-            request.beneficiaryRelationship?.let { Text(it, color = Muted) }
-            request.additionalInfo?.takeIf(String::isNotBlank)?.let {
-                SectionTitle("Additional information")
-                Text(it)
-            }
-            request.reviewReason?.let {
-                SectionTitle("Previous review note")
-                Text(it, color = Coral)
-            }
-            Spacer(Modifier.height(12.dp))
-            SmField("Reason for requesting information or rejecting", reason, { reason = it })
-            if (tried && reason.isBlank()) Text("Enter a reason.", color = Coral)
-            Spacer(Modifier.height(12.dp))
-            Notice("Beneficiary details are private to this facility and the requester. Donors do not receive them.")
-        }
     }
 }
 
@@ -401,7 +291,7 @@ fun EditRequestSubmissionScreen(vm: AppViewModel, nav: NavController, requestId:
 
     Page(footer = {
         SmButton(
-            "Resubmit for facility review",
+            "Save request changes",
             {
                 tried = true
                 if (request != null && valid) {
@@ -418,10 +308,10 @@ fun EditRequestSubmissionScreen(vm: AppViewModel, nav: NavController, requestId:
             Notice("This request is not available on this device.")
         } else {
             request.reviewReason?.let {
-                Notice("Facility asked for an update: $it")
+                Notice("Previous note: $it")
                 Spacer(Modifier.height(12.dp))
             }
-            Text("Update the request details and send it back for verification.", color = Muted)
+            Text("Update the request details.", color = Muted)
             SectionTitle("Blood needed")
             BloodGroupPicker(group, { group = it }, error = tried && group.isBlank())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -448,7 +338,7 @@ fun EditRequestSubmissionScreen(vm: AppViewModel, nav: NavController, requestId:
                 SmField("Relationship (optional)", relationship, { relationship = it })
             }
             Spacer(Modifier.height(8.dp))
-            SmField("Additional information for the facility", information, { information = it })
+            SmField("Additional information (optional)", information, { information = it })
             Spacer(Modifier.height(20.dp))
         }
     }
@@ -461,30 +351,34 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
     DisposableEffect(speechOutput) {
         onDispose { speechOutput.close() }
     }
-    val profile = vm.profile
-    val isWorker = profile?.role == Role.CHW
     var group by remember { mutableStateOf("") }
     var urgency by remember { mutableStateOf(Urgency.URGENT) }
     var units by remember { mutableStateOf(1) }
-    var isForSelf by remember { mutableStateOf(!isWorker) }
+    var isForSelf by remember { mutableStateOf(true) }
     var beneficiaryName by remember { mutableStateOf("") }
     var relationship by remember { mutableStateOf("") }
     var information by remember { mutableStateOf("") }
+    var facilityName by remember { mutableStateOf("") }
+    var facilityLocation by remember { mutableStateOf("") }
+    var latitude by remember { mutableStateOf("") }
+    var longitude by remember { mutableStateOf("") }
     var tried by remember { mutableStateOf(false) }
-    var expanded by remember { mutableStateOf(false) }
     var voiceSheet by remember { mutableStateOf(false) }
     var voiceTranscript by remember { mutableStateOf("") }
-    var selectedFacilityId by remember { mutableStateOf(profile?.facilityId.orEmpty()) }
-    val selectedFacility = vm.facilities.firstOrNull { it.id == selectedFacilityId }
-    val facilityReady = if (isWorker) !profile?.facilityId.isNullOrBlank() else selectedFacility != null
-    val valid = group.isNotBlank() && facilityReady && (isForSelf || beneficiaryName.isNotBlank())
+    val lat = latitude.toDoubleOrNull()
+    val lon = longitude.toDoubleOrNull()
+    val coordinatesEntered = latitude.isNotBlank() || longitude.isNotBlank()
+    val coordinatesValid = !coordinatesEntered ||
+        (lat != null && lon != null && lat in -90.0..90.0 && lon in -180.0..180.0)
+    val valid = group.isNotBlank() && facilityName.isNotBlank() &&
+        facilityLocation.isNotBlank() && coordinatesValid &&
+        (isForSelf || beneficiaryName.isNotBlank())
 
     fun applyVoiceTranscript(transcript: String) {
         voiceTranscript = transcript
-        val extracted = RequestVoiceParser.parse(transcript, vm.facilities)
+        val extracted = RequestVoiceParser.parse(transcript, emptyList())
         extracted.bloodGroup?.let { group = it }
         extracted.units?.let { units = it }
-        extracted.facilityId?.let { selectedFacilityId = it }
     }
 
     LaunchedEffect(vm.pendingVoiceRequestTranscript) {
@@ -493,7 +387,7 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
 
     Page(footer = {
         SmButton(
-            "Submit for facility verification",
+            "Create blood request",
             {
                 tried = true
                 if (valid) {
@@ -501,13 +395,16 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
                         group,
                         urgency,
                         units,
-                        selectedFacilityId,
+                        facilityName.trim(),
+                        facilityLocation.trim(),
+                        lat,
+                        lon,
                         isForSelf,
                         beneficiaryName.takeIf { !isForSelf },
                         relationship.takeIf { !isForSelf && it.isNotBlank() },
                         information.takeIf(String::isNotBlank)
                     ) {
-                        speechOutput.speak("Your blood request has been saved for facility review.")
+                        speechOutput.speak("Your blood request has been created.")
                         nav.navigate("activity")
                     }
                 }
@@ -539,42 +436,35 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
             Spacer(Modifier.height(10.dp))
         }
         Text(
-            "The selected facility reviews your request before it appears to donors.",
+            "Enter the place where donors should go. Your request is available without facility approval.",
             style = MaterialTheme.typography.bodyLarge,
             color = Muted
         )
         if (!vm.isOnline) {
             Spacer(Modifier.height(10.dp))
-            Notice("This request will stay on your phone and will not be shared over Bluetooth or shown to donors before verification.")
+            Notice("Saved on this phone. It can be shared with nearby SisterMesh phones over Bluetooth.")
         }
         Spacer(Modifier.height(18.dp))
-        if (!isWorker) {
-            Text("Health facility", style = MaterialTheme.typography.titleMedium)
-            Box {
-                TextButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text(selectedFacility?.label ?: "Choose an active facility", modifier = Modifier.weight(1f), color = Ink)
-                    androidx.compose.material3.Icon(Icons.Rounded.ArrowDropDown, null)
-                }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    vm.facilities.forEach { facility ->
-                        DropdownMenuItem(
-                            text = { Text(facility.label) },
-                            onClick = { selectedFacilityId = facility.id; expanded = false }
-                        )
-                    }
-                }
+        SectionTitle("Donation location")
+        SmField("Facility name", facilityName, { facilityName = it })
+        if (tried && facilityName.isBlank()) Text("Enter the facility name.", color = Coral)
+        Spacer(Modifier.height(8.dp))
+        SmField("Facility address or location", facilityLocation, { facilityLocation = it })
+        if (tried && facilityLocation.isBlank()) Text("Enter where donors should go.", color = Coral)
+        Spacer(Modifier.height(10.dp))
+        FacilityMapPicker(
+            latitude = lat,
+            longitude = lon,
+            onPinSelected = { pickedLatitude, pickedLongitude ->
+                latitude = "%.6f".format(java.util.Locale.US, pickedLatitude)
+                longitude = "%.6f".format(java.util.Locale.US, pickedLongitude)
             }
-            if (vm.facilities.isEmpty()) {
-                Text(
-                    vm.facilityCatalogError ?: "Connect to the internet once to cache the active facility list.",
-                    color = Coral,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        } else {
-            Text("Assigned facility", style = MaterialTheme.typography.titleMedium)
-            Text(profile?.facility?.ifBlank { "Facility assignment pending" }.orEmpty(), color = Muted)
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SmField("Latitude (optional)", latitude, { latitude = it }, keyboard = KeyboardType.Decimal, modifier = Modifier.weight(1f))
+            SmField("Longitude (optional)", longitude, { longitude = it }, keyboard = KeyboardType.Decimal, modifier = Modifier.weight(1f))
         }
+        if (tried && !coordinatesValid) Text("Enter a valid latitude and longitude pair.", color = Coral)
 
         SectionTitle("Blood needed")
         BloodGroupPicker(group, { group = it }, error = tried && group.isBlank())
@@ -593,12 +483,10 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
             Text(units.toString(), style = MaterialTheme.typography.titleLarge)
                 TextButton(onClick = { if (units < 6) units++ }) { Text("+") }
         }
-        if (!isWorker) {
-            SectionTitle("Who needs blood?")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(onClick = { isForSelf = true }) { Tag("Myself", if (isForSelf) Tone.Brand else Tone.Neutral) }
-                TextButton(onClick = { isForSelf = false }) { Tag("Someone else", if (!isForSelf) Tone.Brand else Tone.Neutral) }
-            }
+        SectionTitle("Who needs blood?")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextButton(onClick = { isForSelf = true }) { Tag("Myself", if (isForSelf) Tone.Brand else Tone.Neutral) }
+            TextButton(onClick = { isForSelf = false }) { Tag("Someone else", if (!isForSelf) Tone.Brand else Tone.Neutral) }
         }
         if (!isForSelf) {
             SmField("Patient or beneficiary name", beneficiaryName, { beneficiaryName = it })
@@ -607,15 +495,14 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
             SmField("Relationship (optional)", relationship, { relationship = it })
         }
         Spacer(Modifier.height(8.dp))
-        SmField("Additional information for the facility (optional)", information, { information = it })
+        SmField("Private note (optional)", information, { information = it })
         Spacer(Modifier.height(12.dp))
-        Notice("Donors see only the blood group, urgency, number of units, and approved facility. Names and notes stay private.")
+        Notice("Donors see the blood group, urgency, units, and donation destination. Patient names and private notes stay on the requester’s phone.")
         Spacer(Modifier.height(24.dp))
     }
 
     if (voiceSheet) {
         VoiceSheet(
-            role = profile?.role ?: Role.INDIVIDUAL,
             onTranscriptConfirmed = { transcript ->
                 applyVoiceTranscript(transcript)
                 voiceSheet = false

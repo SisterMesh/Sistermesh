@@ -7,6 +7,7 @@ import com.sistermesh.app.data.local.MIGRATION_1_2
 import com.sistermesh.app.data.local.MIGRATION_2_3
 import com.sistermesh.app.data.local.MIGRATION_3_4
 import com.sistermesh.app.data.local.MIGRATION_4_5
+import com.sistermesh.app.data.local.MIGRATION_5_6
 import com.sistermesh.app.data.local.SisterMeshDatabase
 import com.sistermesh.app.communication.AndroidKeystoreMeshSigner
 import com.sistermesh.app.communication.GoogleNearbyTransport
@@ -25,7 +26,7 @@ class SisterMeshApplication : Application() {
             applicationContext,
             SisterMeshDatabase::class.java,
             "sistermesh-local.db"
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build()
     }
 
     val repository by lazy { SisterMeshRepository(database) }

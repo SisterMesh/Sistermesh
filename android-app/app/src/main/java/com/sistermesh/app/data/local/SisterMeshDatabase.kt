@@ -24,7 +24,7 @@ import androidx.room.TypeConverters
         SyncConflictEntity::class,
         SyncStateEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(RoomTypeConverters::class)

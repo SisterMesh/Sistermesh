@@ -33,6 +33,7 @@ export class OfflineSyncController {
   constructor(private readonly service: OfflineSyncService) {}
 
   @Post('devices')
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({
     summary: 'Register or retrieve a device owned by the signed-in account.',
     description: 'The JWT remains the only authentication method. Revoked client device IDs cannot be reactivated.',
@@ -43,12 +44,14 @@ export class OfflineSyncController {
   }
 
   @Get('devices')
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({ summary: 'List devices owned by the signed-in account, including revocation state.' })
   listDevices(@CurrentUser() user: AuthenticatedUser) {
     return this.service.listDevices(user);
   }
 
   @Delete('devices/:deviceId')
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({
     summary: 'Revoke an owned device and deny future uploads and downloads.',
     description: 'Revocation is idempotent and preserves the device and its audit records.',
@@ -62,7 +65,7 @@ export class OfflineSyncController {
   }
 
   @Post('devices/:deviceId/batches')
-  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({
     summary: 'Upload a batch of versioned offline coordination events.',
     description: 'Every event is processed independently. Retries must reuse clientBatchId and each eventId.',
@@ -79,7 +82,7 @@ export class OfflineSyncController {
   }
 
   @Get('devices/:deviceId/changes')
-  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({
     summary: 'Read the next page of authorised server changes for this device.',
     description: 'Store all changes locally, then acknowledge exactly nextCursor before requesting the next page.',
@@ -95,7 +98,7 @@ export class OfflineSyncController {
   }
 
   @Post('devices/:deviceId/checkpoint')
-  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({
     summary: 'Acknowledge a fully stored download page and advance its server checkpoint.',
     description: 'Only the exact nextCursor issued for the latest page is accepted.',
@@ -110,7 +113,7 @@ export class OfflineSyncController {
   }
 
   @Get('devices/:deviceId/conflicts')
-  @Roles(UserRole.INDIVIDUAL, UserRole.HEALTH_WORKER)
+  @Roles(UserRole.INDIVIDUAL)
   @ApiOperation({
     summary: 'List conflicts retained for this account and device for manual review.',
     description: 'Returns only events and incoming payloads owned by the authenticated account.',

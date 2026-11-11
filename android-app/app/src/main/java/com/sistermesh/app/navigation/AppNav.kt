@@ -9,8 +9,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.sistermesh.app.data.AppViewModel
-import com.sistermesh.app.data.Role
-import com.sistermesh.app.ui.screens.chw.*
 import com.sistermesh.app.ui.screens.donor.*
 import com.sistermesh.app.ui.screens.onboarding.*
 import com.sistermesh.app.ui.screens.shared.*
@@ -32,12 +30,15 @@ fun AppNav(vm: AppViewModel) {
         }
         composable("welcome") { WelcomeScreen { nav.navigate("role") } }
         composable("role") {
-            RoleScreen(vm, onBack = { nav.popBackStack() }) { role ->
-                nav.navigate(if (role == Role.INDIVIDUAL) "register_individual" else "register_chw")
+            UseModeScreen(vm, onBack = { nav.popBackStack() }) { mode ->
+                nav.navigate("register/${mode.name}")
             }
         }
-        composable("register_individual") { DonorRegistrationScreen(vm, { nav.popBackStack() }) { nav.navigate("permissions") } }
-        composable("register_chw") { ChwRegistrationScreen(vm, { nav.popBackStack() }) { nav.navigate("permissions") } }
+        composable("register/{mode}") {
+            val mode = runCatching { com.sistermesh.app.data.UseMode.valueOf(it.arg("mode")) }
+                .getOrDefault(com.sistermesh.app.data.UseMode.FIND_BLOOD)
+            DonorRegistrationScreen(vm, mode, { nav.popBackStack() }) { nav.navigate("permissions") }
+        }
         composable("permissions") {
             PermissionsScreen { nav.navigate("home") { popUpTo(nav.graph.id) { inclusive = true } } }
         }
@@ -49,8 +50,6 @@ fun AppNav(vm: AppViewModel) {
         composable("find_blood") { FindBloodScreen(vm, nav) }
         composable("donate") { DonateScreen(vm, nav) }
         composable("activity") { ActivityScreen(vm, nav) }
-        composable("facility_requests") { FacilityReviewScreen(vm, nav) }
-        composable("review_request/{id}") { RequestReviewScreen(vm, nav, it.arg("id")) }
         composable("edit_request/{id}") { EditRequestSubmissionScreen(vm, nav, it.arg("id")) }
         composable("history") { ActivityScreen(vm, nav) }
         composable("profile") { ProfileScreen(vm, nav) }
@@ -60,11 +59,7 @@ fun AppNav(vm: AppViewModel) {
         // Donor flow
         composable("incoming/{id}") { IncomingRequestScreen(vm, nav, it.arg("id")) }
 
-        // CHW flow
         composable("create_request") { UnifiedCreateRequestScreen(vm, nav) }
-        composable("broadcast/{id}") { BroadcastScreen(vm, nav, it.arg("id")) }
-        composable("tracking/{id}") { TrackingScreen(vm, nav, it.arg("id")) }
-        composable("confirm/{id}/{ref}") { DonationConfirmationScreen(vm, nav, it.arg("id"), it.arg("ref")) }
 
         // Shared
         composable("coordinate/{id}/{ref}") { CoordinationScreen(vm, nav, it.arg("id"), it.arg("ref")) }

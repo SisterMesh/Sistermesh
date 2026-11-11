@@ -10,6 +10,7 @@ import com.sistermesh.app.data.RequestStatus
 import com.sistermesh.app.data.ResponseStatus
 import com.sistermesh.app.data.Role
 import com.sistermesh.app.data.Urgency
+import com.sistermesh.app.data.UseMode
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -18,6 +19,7 @@ import java.util.Locale
 fun ProfileEntity.toDomain() = Profile(
     role = Role.valueOf(role),
     name = name,
+    useMode = runCatching { UseMode.valueOf(useMode) }.getOrDefault(UseMode.FIND_BLOOD),
     bloodGroup = bloodGroup,
     area = area,
     phone = phone,
@@ -34,6 +36,9 @@ fun RequestWithResponses.toDomain() = BloodRequest(
     units = request.units,
     note = request.note,
     facility = request.facility,
+    facilityLocation = request.facilityLocation,
+    facilityLatitude = request.facilityLatitude,
+    facilityLongitude = request.facilityLongitude,
     createdAt = request.createdAt.toDisplayTimestamp(),
     status = request.status.toRequestStatus(),
     serverUpdatedAt = request.updatedAt,
@@ -63,6 +68,9 @@ fun EmergencyRequestEntity.toIncomingDomain() = IncomingRequest(
     id = localId,
     bloodGroup = bloodGroup,
     facility = facility,
+    facilityLocation = facilityLocation,
+    facilityLatitude = facilityLatitude,
+    facilityLongitude = facilityLongitude,
     distance = distance,
     urgency = Urgency.valueOf(urgency),
     receivedAt = receivedAt,

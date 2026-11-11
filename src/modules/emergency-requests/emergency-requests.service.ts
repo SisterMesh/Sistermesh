@@ -49,31 +49,37 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       where: { id: user.id },
       select: { id: true, role: true, status: true },
     });
-    if (!actor || actor.status !== 'ACTIVE' ||
-      (actor.role !== UserRole.INDIVIDUAL && actor.role !== UserRole.HEALTH_WORKER)) {
-      throw new ForbiddenException('An active individual or health-worker account is required.');
+    if (!actor || actor.status !== 'ACTIVE' || actor.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('An active individual account is required.');
     }
-    const facilityId = actor.role === UserRole.HEALTH_WORKER
-      ? await this.getWorkerFacility(user)
-      : dto.facilityId;
-    if (!facilityId) {
-      throw new BadRequestException('Choose an active health facility for this request.');
+    const selectedFacility = dto.facilityId
+      ? await this.prisma.facility.findFirst({
+          where: { id: dto.facilityId },
+          select: { id: true, name: true, locality: true, state: true },
+        })
+      : null;
+    if (dto.facilityId && !selectedFacility) {
+      throw new BadRequestException('The selected facility is not available.');
     }
-    const facility = await this.prisma.facility.findFirst({
-      where: { id: facilityId, status: 'ACTIVE' },
-      select: { id: true },
-    });
-    if (!facility) {
-      throw new BadRequestException('Choose an active health facility.');
+    const facilityName = dto.facilityName?.trim() || selectedFacility?.name || '';
+    const facilityLocation = dto.facilityLocation?.trim() ||
+      [selectedFacility?.locality, selectedFacility?.state].filter(Boolean).join(', ');
+    if (!facilityName || !facilityLocation) {
+      throw new BadRequestException('Enter the donation facility name and location.');
     }
-    const isForSelf = dto.isForSelf ?? actor.role === UserRole.INDIVIDUAL;
+    const facilityLatitude = dto.facilityLatitude ?? null;
+    const facilityLongitude = dto.facilityLongitude ?? null;
+    if ((facilityLatitude === null) !== (facilityLongitude === null)) {
+      throw new BadRequestException('Enter both facility coordinates or neither.');
+    }
+    const isForSelf = dto.isForSelf ?? true;
     const beneficiaryName = dto.beneficiaryName?.trim() || null;
     const beneficiaryRelationship = dto.beneficiaryRelationship?.trim() || null;
     const additionalInfo = dto.additionalInfo?.trim() || null;
     if (isForSelf && (beneficiaryName || beneficiaryRelationship)) {
       throw new BadRequestException('Beneficiary details must be omitted for a request for yourself.');
     }
-    if (!isForSelf && !beneficiaryName && actor.role === UserRole.INDIVIDUAL) {
+    if (!isForSelf && !beneficiaryName) {
       throw new BadRequestException('Enter the patient or beneficiary name for a request on someone else’s behalf.');
     }
 
@@ -83,7 +89,8 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       include: { facility: true },
     });
     if (existing) {
-      return this.assertSameCreate(existing, user.id, facilityId, dto, expiresAt, isForSelf,
+      return this.assertSameCreate(existing, user.id, facilityName, facilityLocation,
+        facilityLatitude, facilityLongitude, dto, expiresAt, isForSelf,
         beneficiaryName, beneficiaryRelationship, additionalInfo);
     }
     if (expiresAt && expiresAt <= new Date()) {
@@ -96,7 +103,11 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
           data: {
             clientRequestId: dto.clientRequestId,
             createdByUserId: user.id,
-            facilityId,
+            facilityId: selectedFacility?.id ?? null,
+            facilityName,
+            facilityLocation,
+            facilityLatitude,
+            facilityLongitude,
             isForSelf,
             beneficiaryName,
             beneficiaryRelationship,
@@ -105,7 +116,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
             urgency: dto.urgency,
             units: dto.units,
             expiresAt,
-            status: EmergencyRequestStatus.PENDING_FACILITY_VERIFICATION,
+            status: EmergencyRequestStatus.OPEN,
           },
           include: { facility: true },
         });
@@ -114,7 +125,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
             actorUserId: user.id,
             eventType: RequestActivityType.CREATED,
             toStatus: request.status,
-            metadata: { facilityId, units: dto.units, isForSelf },
+            metadata: { facilityName, facilityLocation, units: dto.units, isForSelf },
         });
         return request;
       });
@@ -125,7 +136,8 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
           include: { facility: true },
         });
         if (duplicate) {
-          return this.assertSameCreate(duplicate, user.id, facilityId, dto, expiresAt, isForSelf,
+          return this.assertSameCreate(duplicate, user.id, facilityName, facilityLocation,
+            facilityLatitude, facilityLongitude, dto, expiresAt, isForSelf,
             beneficiaryName, beneficiaryRelationship, additionalInfo);
         }
       }
@@ -146,7 +158,7 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
     if (!donor.donorProfile.isAvailable || !donorBloodGroup) return [];
 
     const now = new Date();
-    return this.prisma.emergencyRequest.findMany({
+    const requests = await this.prisma.emergencyRequest.findMany({
       where: {
         requestedBloodGroup: {
           in: Object.entries(DONOR_GROUPS_FOR_RECIPIENT)
@@ -164,10 +176,24 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
         status: true,
         expiresAt: true,
         createdAt: true,
+        facilityId: true,
+        facilityName: true,
+        facilityLocation: true,
+        facilityLatitude: true,
+        facilityLongitude: true,
         facility: { select: { id: true, name: true, locality: true, state: true } },
       },
       orderBy: [{ urgency: 'desc' }, { createdAt: 'desc' }],
     });
+    return requests.map((request) => ({
+      ...request,
+      facility: request.facility ?? {
+        id: request.facilityId ?? '',
+        name: request.facilityName,
+        locality: request.facilityLocation,
+        state: '',
+      },
+    }));
   }
 
   async listForFacility(user: AuthenticatedUser) {
@@ -227,11 +253,8 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       if (request.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
         throw new ConflictException('The request changed after the device last synchronized.');
       }
-      if (
-        request.status !== EmergencyRequestStatus.PENDING_FACILITY_VERIFICATION &&
-        request.status !== EmergencyRequestStatus.NEEDS_INFORMATION
-      ) {
-        throw new ConflictException('Only a request awaiting facility verification can be changed.');
+      if (!this.isOpen(request.status)) {
+        throw new ConflictException('Only an open request can be changed.');
       }
       const isForSelf = dto.isForSelf ?? request.isForSelf;
       const beneficiaryName = dto.beneficiaryName === undefined
@@ -256,14 +279,6 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
         ...(dto.units !== undefined ? { units: dto.units } : {}),
         ...(dto.expiresAt !== undefined
           ? { expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null }
-          : {}),
-        ...(request.status === EmergencyRequestStatus.NEEDS_INFORMATION
-          ? {
-              status: EmergencyRequestStatus.PENDING_FACILITY_VERIFICATION,
-              reviewReason: null,
-              reviewedByUserId: null,
-              reviewedAt: null,
-            }
           : {}),
       };
       const updated = await tx.emergencyRequest.update({
@@ -447,19 +462,12 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       select: { id: true, status: true, role: true },
     });
     if (!actor || actor.status !== 'ACTIVE') throw new ForbiddenException('An active account is required.');
-    const facilityId = actor.role === UserRole.HEALTH_WORKER
-      ? await this.getWorkerFacility(user)
-      : null;
-    if (actor.role !== UserRole.HEALTH_WORKER && actor.role !== UserRole.INDIVIDUAL) {
-      throw new ForbiddenException('Only the requester or assigned health facility can cancel this request.');
+    if (actor.role !== UserRole.INDIVIDUAL) {
+      throw new ForbiddenException('Only the requester can cancel this request.');
     }
     const result = await this.prisma.$transaction(async (tx) => {
       const request = await this.lockRequest(tx, requestId);
-      const authorized =
-        request &&
-        (actor.role === UserRole.INDIVIDUAL
-          ? request.createdByUserId === user.id
-          : request.facilityId === facilityId);
+      const authorized = request?.createdByUserId === user.id;
       if (!request || !authorized) {
         throw new NotFoundException('Emergency request not found.');
       }
@@ -538,6 +546,10 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
     return tx.emergencyRequest.findUnique({ where: { id: requestId } });
   }
 
+  private async getWorkerFacility(_user: AuthenticatedUser): Promise<string> {
+    throw new ForbiddenException('Health-worker facility workflows are no longer available.');
+  }
+
   private isOpen(status: EmergencyRequestStatus) {
     return status === EmergencyRequestStatus.OPEN || status === EmergencyRequestStatus.PARTIALLY_FILLED;
   }
@@ -582,35 +594,15 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
     await createSyncActivity(tx, { requestId, actorUserId, eventType, fromStatus, toStatus });
   }
 
-  private async getWorkerFacility(user: AuthenticatedUser): Promise<string> {
-    const worker = await this.prisma.user.findUnique({
-      where: { id: user.id },
-      include: {
-        healthWorkerProfile: {
-          include: { facility: { select: { status: true } } },
-        },
-      },
-    });
-    if (!worker || worker.status !== 'ACTIVE' || worker.role !== UserRole.HEALTH_WORKER) {
-      throw new ForbiddenException('An active health worker account is required.');
-    }
-    if (worker.healthWorkerProfile?.verificationStatus !== 'VERIFIED') {
-      throw new ForbiddenException('Your health worker profile has not been verified.');
-    }
-    if (!worker.healthWorkerProfile?.facilityId) {
-      throw new ForbiddenException('Your account is not assigned to a facility.');
-    }
-    if (worker.healthWorkerProfile.facility?.status !== 'ACTIVE') {
-      throw new ForbiddenException('Your assigned facility is not active.');
-    }
-    return worker.healthWorkerProfile.facilityId;
-  }
-
   private assertSameCreate(
     existing: {
       id: string;
       createdByUserId: string;
-      facilityId: string;
+      facilityId: string | null;
+      facilityName: string;
+      facilityLocation: string;
+      facilityLatitude: number | null;
+      facilityLongitude: number | null;
       requestedBloodGroup: BloodGroup;
       urgency: string;
       units: number;
@@ -621,7 +613,10 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       additionalInfo: string | null;
     },
     userId: string,
-    facilityId: string,
+    facilityName: string,
+    facilityLocation: string,
+    facilityLatitude: number | null,
+    facilityLongitude: number | null,
     dto: CreateEmergencyRequestDto,
     expiresAt: Date | null,
     isForSelf: boolean,
@@ -631,7 +626,10 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
   ) {
     const same =
       existing.createdByUserId === userId &&
-      existing.facilityId === facilityId &&
+      existing.facilityName === facilityName &&
+      existing.facilityLocation === facilityLocation &&
+      existing.facilityLatitude === facilityLatitude &&
+      existing.facilityLongitude === facilityLongitude &&
       existing.requestedBloodGroup === dto.requestedBloodGroup &&
       existing.urgency === dto.urgency &&
       existing.units === dto.units &&

@@ -25,30 +25,32 @@ object MockData {
 
     fun requests() = listOf(
         BloodRequest(
-            "REQ-2190", "O-", Urgency.CRITICAL, 1, "", "Trans-Amadi General", "12 Oct 2026, 14:20",
-            RequestStatus.COMPLETED, devicesFound = 5, delivered = 5,
+            id = "REQ-2190", bloodGroup = "O-", urgency = Urgency.CRITICAL, units = 1,
+            note = "", facility = "Trans-Amadi General", createdAt = "12 Oct 2026, 14:20",
+            status = RequestStatus.COMPLETED, devicesFound = 5, delivered = 5,
             responses = listOf(
                 DonorResponse("91BE", "Trans-Amadi", "About 2.0 km", ResponseStatus.CONFIRMED),
                 DonorResponse("0D4A", "Rumuola", "About 3.1 km", ResponseStatus.DECLINED)
             )
         ),
         BloodRequest(
-            "REQ-1744", "B+", Urgency.URGENT, 2, "", "Trans-Amadi General", "29 Sep 2026, 09:05",
-            RequestStatus.EXPIRED, devicesFound = 3, delivered = 3,
+            id = "REQ-1744", bloodGroup = "B+", urgency = Urgency.URGENT, units = 2,
+            note = "", facility = "Trans-Amadi General", createdAt = "29 Sep 2026, 09:05",
+            status = RequestStatus.EXPIRED, devicesFound = 3, delivered = 3,
             responses = listOf(DonorResponse("C52F", "Diobu", "About 4.2 km", ResponseStatus.EXPIRED))
         ),
         BloodRequest(
-            "REQ-1102", "A-", Urgency.CRITICAL, 1, "", "Trans-Amadi General", "14 Sep 2026, 22:40",
-            RequestStatus.CANCELLED, devicesFound = 2, delivered = 2
+            id = "REQ-1102", bloodGroup = "A-", urgency = Urgency.CRITICAL, units = 1,
+            note = "", facility = "Trans-Amadi General", createdAt = "14 Sep 2026, 22:40",
+            status = RequestStatus.CANCELLED, devicesFound = 2, delivered = 2
         )
     )
 
     fun receipts(): List<Receipt> {
         val ref = "91BE"
         val ts = "12 Oct 2026, 16:05"
-        return listOf(Receipt("SM-R-2190", "REQ-2190", ref, ts, "Confirmed by healthcare worker", sha256("REQ-2190|$ref|$ts")))
+        return listOf(Receipt("SM-R-2190", "REQ-2190", ref, ts, "Donation confirmed", sha256("REQ-2190|$ref|$ts")))
     }
 
     val donorQuickReplies = listOf("I'm on my way", "I need 30 more minutes", "Which entrance should I use?")
-    val chwQuickReplies = listOf("Please come to maternity reception", "Bring a valid ID", "Thank you, we are ready")
 }

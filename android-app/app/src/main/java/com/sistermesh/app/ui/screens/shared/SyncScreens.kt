@@ -72,7 +72,7 @@ fun SyncStatusCard(vm: AppViewModel, nav: NavController) {
         Text(
             when {
                 currentUser == null && vm.accountState == AccountState.SavedOffline -> "Saved account available when internet returns."
-                currentUser == null -> "Connect a donor or health-worker account to sync across devices."
+                currentUser == null -> "Connect your account to sync across devices."
                 vm.accountState is AccountState.RoleMismatch -> "The signed-in account role does not match this local profile."
                 !vm.isAccountLinked -> "The account is connected, but this phone's local records are not linked yet."
                 else -> "Signed in as ${currentUser.displayName}. Local work continues while offline."
@@ -125,7 +125,6 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
     var createAccount by remember { mutableStateOf(false) }
     var phone by remember { mutableStateOf(profile?.phone.orEmpty()) }
     var password by remember { mutableStateOf("") }
-    var professionalId by remember { mutableStateOf("") }
     var confirmLink by remember { mutableStateOf(false) }
     val currentUser = when (val state = vm.accountState) {
         is AccountState.SignedIn -> state.user
@@ -142,7 +141,7 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(12.dp))
         if (profile == null) {
             SmCard {
-                Text("Create a local donor or health-worker profile first. The app remains usable offline.", color = Muted)
+                Text("Create a Find Blood or Donate Blood profile first. The app remains usable offline.", color = Muted)
             }
         } else if (currentUser != null) {
             SmCard {
@@ -184,7 +183,7 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
             Text("Use a SisterMesh account", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(6.dp))
             Text(
-                "Local requests and nearby sharing continue without an account. Account sync is available for donors and health workers only.",
+                "Local requests and nearby sharing continue without an account. Account sync is optional.",
                 color = Muted
             )
             Spacer(Modifier.height(14.dp))
@@ -193,12 +192,12 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
                     Text("Sign in", color = if (!createAccount) Teal else Muted)
                 }
                 TextButton(onClick = { createAccount = true; vm.clearAccountFeedback() }) {
-                    Text("Create ${if (profile.role == Role.INDIVIDUAL) "individual" else "health-worker"} account", color = if (createAccount) Teal else Muted)
+                    Text("Create account", color = if (createAccount) Teal else Muted)
                 }
             }
             SmCard {
                 Text(
-                    if (createAccount) "Account type: ${if (profile.role == Role.INDIVIDUAL) "Individual" else "Health worker"}"
+                    if (createAccount) "Account type: Individual"
                     else "Sign in with the account matching this phone's local profile.",
                     style = MaterialTheme.typography.titleMedium
                 )
@@ -223,20 +222,11 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
                     supportingText = { Text("At least 12 characters.") },
                     singleLine = true
                 )
-                if (createAccount && profile.role == Role.CHW) {
-                    OutlinedTextField(
-                        value = professionalId,
-                        onValueChange = { professionalId = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Professional ID (optional)") },
-                        singleLine = true
-                    )
-                }
                 Spacer(Modifier.height(8.dp))
                 SmButton(
                     if (createAccount) "Create account" else "Sign in",
                     onClick = {
-                        if (createAccount) vm.registerAccount(phone, password, professionalId)
+                        if (createAccount) vm.registerAccount(phone, password)
                         else vm.loginAccount(phone, password)
                     },
                     enabled = !vm.accountBusy && validPhone && validPassword
@@ -350,7 +340,6 @@ private fun syncStatusLabel(status: String): String = when (status) {
     "ACCOUNT_LINK_REQUIRED" -> "Link this phone to an account"
     "ACCOUNT_MISMATCH" -> "Account does not match"
     "PROFILE_INCOMPLETE" -> "Complete account profile"
-    "VERIFICATION_PENDING" -> "Health-worker verification pending"
     "DEVICE_REVOKED" -> "This phone was revoked"
     "FAILED" -> "Sync could not be completed"
     else -> status.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase)

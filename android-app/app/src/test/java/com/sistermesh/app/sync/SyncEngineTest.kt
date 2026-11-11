@@ -200,7 +200,7 @@ class SyncEngineTest {
     }
 
     @Test
-    fun healthWorkerWithoutVerifiedFacilityWaitsWithoutRegisteringDevice() = runBlocking {
+    fun legacyWorkerAccountCannotSyncAfterRoleRemoval() = runBlocking {
         val database = newDatabase()
         try {
             val fixture = initialize(database)
@@ -225,7 +225,7 @@ class SyncEngineTest {
             val api = FakeSyncApi(worker, database)
             val engine = SyncEngine(database, api, AuthRepository(api, MemoryTokenStore()))
 
-            assertEquals(SyncOutcome.VERIFICATION_PENDING, engine.run())
+            assertEquals(SyncOutcome.ACCOUNT_MISMATCH, engine.run())
             assertEquals(0, api.registerDeviceCalls)
             assertTrue(database.deviceInfoDao().get()?.serverDeviceId == null)
         } finally {

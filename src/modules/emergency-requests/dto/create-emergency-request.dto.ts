@@ -5,12 +5,14 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 export class CreateEmergencyRequestDto {
@@ -22,6 +24,34 @@ export class CreateEmergencyRequestDto {
   @IsOptional()
   @IsUUID()
   facilityId?: string;
+
+  @ApiPropertyOptional({ minLength: 2, maxLength: 120 })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  facilityName?: string;
+
+  @ApiPropertyOptional({ minLength: 2, maxLength: 240 })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(240)
+  facilityLocation?: string;
+
+  @ApiPropertyOptional({ minimum: -90, maximum: 90 })
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-90)
+  @Max(90)
+  facilityLatitude?: number;
+
+  @ApiPropertyOptional({ minimum: -180, maximum: 180 })
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-180)
+  @Max(180)
+  facilityLongitude?: number;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()

@@ -88,6 +88,7 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             ProfileEntity(
                 role = profile.role.name,
                 name = profile.name,
+                useMode = profile.useMode.name,
                 bloodGroup = profile.bloodGroup,
                 area = profile.area,
                 phone = profile.phone,
@@ -113,18 +114,16 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         }
     }
 
-    suspend fun resetDemoProfile() {
-        database.withTransaction {
-            profiles.clear()
-            requests.deleteDemoRequests()
-        }
-    }
+    suspend fun clearProfile() = profiles.clear()
 
     suspend fun createRequest(
         group: String,
         urgency: Urgency,
         units: Int,
-        facilityId: String,
+        facilityName: String,
+        facilityLocation: String,
+        facilityLatitude: Double?,
+        facilityLongitude: Double?,
         isForSelf: Boolean,
         beneficiaryName: String?,
         beneficiaryRelationship: String?,
@@ -135,26 +134,24 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
         val localId = "REQ-${UUID.randomUUID().toString().take(8).uppercase()}"
         val profile = profiles.get()
         val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }.clientDeviceId.toString()
-        val facility = database.facilityDao().getAll().firstOrNull { it.id == facilityId }
-        val facilityName = facility?.let {
-            listOf(it.name, it.locality, it.state).filter(String::isNotBlank).joinToString(", ")
-        } ?: profile?.facility.orEmpty()
         val request = EmergencyRequestEntity(
             localId = localId,
-            kind = if (profile?.role == "CHW") "FACILITY" else "OUTGOING",
+            kind = "OUTGOING",
             bloodGroup = group,
             urgency = urgency.name,
             units = units,
             note = additionalInfo.orEmpty(),
             additionalInfo = additionalInfo,
-            facility = facilityName.ifBlank { "Health facility" },
-            facilityId = facilityId,
+            facility = facilityName.trim(),
+            facilityLocation = facilityLocation.trim(),
+            facilityLatitude = facilityLatitude,
+            facilityLongitude = facilityLongitude,
             isForSelf = isForSelf,
             beneficiaryName = beneficiaryName,
             beneficiaryRelationship = beneficiaryRelationship,
             createdAt = now,
             updatedAt = now,
-            status = RequestStatus.PENDING_FACILITY_VERIFICATION.name,
+            status = RequestStatus.OPEN.name,
             syncStatus = "PENDING"
         )
         val event = LocalEventFactory.requestCreate(
@@ -162,7 +159,10 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
             bloodGroup = group,
             urgency = urgency.name,
             units = units,
-            facilityId = facilityId,
+            facilityName = facilityName.trim(),
+            facilityLocation = facilityLocation.trim(),
+            facilityLatitude = facilityLatitude,
+            facilityLongitude = facilityLongitude,
             isForSelf = isForSelf,
             beneficiaryName = beneficiaryName,
             beneficiaryRelationship = beneficiaryRelationship,

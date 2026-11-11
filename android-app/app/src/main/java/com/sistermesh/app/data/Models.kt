@@ -6,6 +6,7 @@ import java.util.Date
 import java.util.Locale
 
 enum class Role { INDIVIDUAL, CHW }
+enum class UseMode { FIND_BLOOD, DONATE_BLOOD }
 
 enum class Urgency(val label: String) { CRITICAL("Critical"), URGENT("Urgent") }
 
@@ -52,6 +53,7 @@ val Languages = listOf("English", "Hausa", "Yoruba", "Igbo", "Pidgin")
 data class Profile(
     val role: Role,
     val name: String,
+    val useMode: UseMode = UseMode.FIND_BLOOD,
     val bloodGroup: String = "",
     val area: String = "",
     val phone: String = "",
@@ -73,6 +75,9 @@ data class BloodRequest(
     val units: Int,
     val note: String,
     val facility: String,
+    val facilityLocation: String = "",
+    val facilityLatitude: Double? = null,
+    val facilityLongitude: Double? = null,
     val createdAt: String,
     val status: RequestStatus,
     val serverUpdatedAt: String? = null,
@@ -95,6 +100,9 @@ data class IncomingRequest(
     val id: String,
     val bloodGroup: String,
     val facility: String,
+    val facilityLocation: String = "",
+    val facilityLatitude: Double? = null,
+    val facilityLongitude: Double? = null,
     val distance: String,
     val urgency: Urgency,
     val receivedAt: String,

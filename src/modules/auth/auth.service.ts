@@ -16,7 +16,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AccessTokenService } from './access-token.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDonorDto } from './dto/register-donor.dto';
-import { RegisterHealthWorkerDto } from './dto/register-health-worker.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { REFRESH_TOKEN_TTL_SECONDS } from './refresh-cookie';
@@ -66,9 +65,9 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthSession> {
-    const role = dto.role === UserRole.DONOR ? UserRole.INDIVIDUAL : dto.role;
-    if (role !== UserRole.INDIVIDUAL && role !== UserRole.HEALTH_WORKER) {
-      throw new BadRequestException('Only individual and health-worker accounts can register.');
+    const role = dto.role;
+    if (role !== UserRole.INDIVIDUAL) {
+      throw new BadRequestException('Only individual accounts can register.');
     }
     this.validateRegistration(dto.displayName, dto.password);
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
@@ -80,13 +79,6 @@ export class AuthService {
           displayName: dto.displayName.trim(),
           phoneNumber: dto.phoneNumber,
           passwordHash,
-          ...(role === UserRole.HEALTH_WORKER
-            ? {
-                healthWorkerProfile: {
-                  create: { verificationStatus: 'PENDING', facilityId: null },
-                },
-              }
-            : {}),
         },
         select: PUBLIC_USER_SELECT,
       });
@@ -129,37 +121,6 @@ export class AuthService {
     }
   }
 
-  async registerHealthWorker(dto: RegisterHealthWorkerDto): Promise<AuthSession> {
-    this.validateRegistration(dto.displayName, dto.password);
-    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
-    try {
-      const user = await this.prisma.user.create({
-        data: {
-          role: UserRole.HEALTH_WORKER,
-          status: AccountStatus.ACTIVE,
-          displayName: dto.displayName.trim(),
-          phoneNumber: dto.phoneNumber,
-          passwordHash,
-          healthWorkerProfile: {
-            create: {
-              designation: dto.designation?.trim() || null,
-              professionalId: dto.professionalId?.trim() || null,
-              verificationStatus: 'PENDING',
-              facilityId: null,
-            },
-          },
-        },
-        select: PUBLIC_USER_SELECT,
-      });
-      return this.createSession(user);
-    } catch (error) {
-      if (this.isUniqueConstraint(error)) {
-        throw new ConflictException('An account already uses this phone number or professional ID.');
-      }
-      throw error;
-    }
-  }
-
   async login(dto: LoginDto): Promise<AuthSession> {
     const user = await this.prisma.user.findUnique({
       where: { phoneNumber: dto.phoneNumber },
@@ -169,6 +130,7 @@ export class AuthService {
       !user ||
       !user.passwordHash ||
       user.status !== AccountStatus.ACTIVE ||
+      user.role === UserRole.HEALTH_WORKER ||
       !(await this.verifyPassword(dto.password, user.passwordHash))
     ) {
       throw new UnauthorizedException('Phone number or password is incorrect.');

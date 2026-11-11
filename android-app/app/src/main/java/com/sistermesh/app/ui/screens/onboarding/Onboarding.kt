@@ -103,18 +103,18 @@ private fun Feature(icon: ImageVector, title: String, body: String) {
 
 // S03
 @Composable
-fun RoleScreen(vm: AppViewModel, onBack: () -> Unit, onContinue: (Role) -> Unit) {
-    val role = vm.pendingRole
-    Page(footer = { SmButton("Continue", { role?.let(onContinue) }, enabled = role != null) }) {
+fun UseModeScreen(vm: AppViewModel, onBack: () -> Unit, onContinue: (UseMode) -> Unit) {
+    val mode = vm.pendingUseMode
+    Page(footer = { SmButton("Continue", { mode?.let(onContinue) }, enabled = mode != null) }) {
         BackHeader("", onBack)
         Spacer(Modifier.height(12.dp))
         Text("How will you use SisterMesh?", style = MaterialTheme.typography.headlineLarge)
         Spacer(Modifier.height(8.dp))
-        Text("You can change this later by resetting your profile.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Text("Choose what you need today. You can change this later.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(28.dp))
-        RoleCard(Icons.Rounded.Favorite, "I'm an individual", "Request blood for yourself or someone else, and optionally volunteer as a donor.", role == Role.INDIVIDUAL) { vm.pendingRole = Role.INDIVIDUAL }
+        RoleCard(Icons.Rounded.Search, "I want to find blood", "Create a request for yourself or someone else.", mode == UseMode.FIND_BLOOD) { vm.pendingUseMode = UseMode.FIND_BLOOD }
         Spacer(Modifier.height(14.dp))
-        RoleCard(Icons.Rounded.LocalHospital, "I'm a healthcare worker", "Find willing donors for a patient in an emergency.", role == Role.CHW) { vm.pendingRole = Role.CHW }
+        RoleCard(Icons.Rounded.Favorite, "I want to donate blood", "See nearby requests and choose when to help.", mode == UseMode.DONATE_BLOOD) { vm.pendingUseMode = UseMode.DONATE_BLOOD }
     }
 }
 
@@ -137,13 +137,13 @@ private fun RoleCard(icon: ImageVector, title: String, body: String, selected: B
 
 // S04
 @Composable
-fun DonorRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> Unit) {
+fun DonorRegistrationScreen(vm: AppViewModel, mode: UseMode, onBack: () -> Unit, onDone: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
     var group by remember { mutableStateOf("") }
     var area by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-    var wantsToDonate by remember { mutableStateOf(false) }
+    var wantsToDonate by remember(mode) { mutableStateOf(mode == UseMode.DONATE_BLOOD) }
     var consent by remember { mutableStateOf(false) }
     var tried by remember { mutableStateOf(false) }
 
@@ -161,19 +161,28 @@ fun DonorRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> 
         SmButton("Register", {
             tried = true
             if (valid) {
-                vm.register(Profile(Role.INDIVIDUAL, name.trim(), if (wantsToDonate) group else "", area.trim(), phone.trim())) {
+                vm.register(Profile(
+                    role = Role.INDIVIDUAL,
+                    name = name.trim(),
+                    useMode = mode,
+                    bloodGroup = if (wantsToDonate) group else "",
+                    area = area.trim(),
+                    phone = phone.trim()
+                )) {
                     onDone()
                 }
             }
         })
     }) {
-        BackHeader("Individual registration", onBack)
+        BackHeader(if (mode == UseMode.FIND_BLOOD) "Find blood" else "Donate blood", onBack)
         Spacer(Modifier.height(8.dp))
         Text("Create one account to request blood for yourself or someone else. Donor participation is optional.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(24.dp))
         SmField("Name or display name", name, { name = it }, error = if (tried && name.isBlank()) "Enter a name" else null)
         Spacer(Modifier.height(4.dp))
-        CheckRow(wantsToDonate, { wantsToDonate = it; consent = false }, "I also want to volunteer as a blood donor.")
+        if (mode == UseMode.FIND_BLOOD) {
+            CheckRow(wantsToDonate, { wantsToDonate = it; consent = false }, "I also want to volunteer as a blood donor.")
+        }
         if (wantsToDonate) {
             Spacer(Modifier.height(8.dp))
             SmField("Age", age, { age = it.filter(Char::isDigit).take(2) }, keyboard = KeyboardType.Number, error = if (tried) ageError else null)
@@ -194,46 +203,6 @@ fun DonorRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> 
             Spacer(Modifier.height(12.dp))
             Notice("Registering does not confirm medical eligibility. A health professional makes that decision.")
         }
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-// S05
-@Composable
-fun ChwRegistrationScreen(vm: AppViewModel, onBack: () -> Unit, onDone: () -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var designation by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var tried by remember { mutableStateOf(false) }
-    val valid = name.isNotBlank() && designation.isNotBlank()
-    fun err(v: String, m: String) = if (tried && v.isBlank()) m else null
-
-    Page(footer = {
-        SmButton("Register", {
-            tried = true
-            if (valid) {
-                vm.register(
-                    Profile(
-                        Role.CHW,
-                        name.trim(),
-                        phone = phone.trim(),
-                        designation = designation.trim()
-                    )
-                ) {
-                    onDone()
-                }
-            }
-        })
-    }) {
-        BackHeader("Healthcare worker", onBack)
-        Spacer(Modifier.height(8.dp))
-        Text("Your account must be verified and assigned to an approved facility before it can manage requests.", style = MaterialTheme.typography.bodyLarge, color = Muted)
-        Spacer(Modifier.height(24.dp))
-        SmField("Full name", name, { name = it }, error = err(name, "Enter your name"))
-        Spacer(Modifier.height(4.dp))
-        SmField("Role or designation", designation, { designation = it }, error = err(designation, "Enter your role"))
-        Spacer(Modifier.height(4.dp))
-        SmField("Contact number (optional)", phone, { phone = it.filter { c -> c.isDigit() || c == '+' } }, keyboard = KeyboardType.Phone)
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -268,8 +237,6 @@ fun PermissionsScreen(onDone: () -> Unit) {
         refresh()
     }
     val all = missing.isEmpty()
-    val permissionLabels = missing.map { it.substringAfterLast('.') }.joinToString(", ")
-
     Page(footer = {
         SmButton(if (all) "Continue" else "Enable nearby access", {
             if (all) onDone() else permissionLauncher.launch(missing.toTypedArray())
@@ -280,13 +247,7 @@ fun PermissionsScreen(onDone: () -> Unit) {
         }
     }) {
         Spacer(Modifier.height(28.dp))
-        Text("Let your phone talk to nearby phones", style = MaterialTheme.typography.headlineLarge)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "SisterMesh uses Nearby Connections to find and connect to phones without internet. Requests contain only the limited details needed to coordinate.",
-            style = MaterialTheme.typography.bodyLarge, color = Muted
-        )
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(12.dp))
         val rows = buildList {
             add(
                 Perm(
@@ -340,9 +301,6 @@ fun PermissionsScreen(onDone: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-        }
-        if (!all) {
-            Text("Needed permissions: $permissionLabels", style = MaterialTheme.typography.labelMedium, color = Muted)
         }
         if (!bluetoothEnabled.value) {
             TextButton(

@@ -31,13 +31,6 @@ data class BackendUser(
 
 data class BackendSession(val accessToken: String, val refreshCookie: String, val user: BackendUser)
 
-data class BackendFacility(
-    val id: String,
-    val name: String,
-    val locality: String,
-    val state: String
-)
-
 data class BackendDonorProfile(
     val id: String,
     val bloodGroup: String?,
@@ -85,6 +78,9 @@ data class ServerRequestSnapshot(
     val facilityLocality: String,
     val facilityState: String,
     val facilityId: String = "",
+    val facilityLocation: String = "",
+    val facilityLatitude: Double? = null,
+    val facilityLongitude: Double? = null,
     val isMine: Boolean = false,
     val isForSelf: Boolean? = null,
     val beneficiaryName: String? = null,
@@ -144,17 +140,9 @@ interface SyncBackendApi {
         bloodGroup: String,
         locality: String
     ): BackendSession
-    suspend fun registerHealthWorker(
-        displayName: String,
-        phoneNumber: String,
-        password: String,
-        designation: String,
-        professionalId: String
-    ): BackendSession
     suspend fun refresh(refreshCookie: String): BackendSession
     suspend fun logout(refreshCookie: String)
     suspend fun getMe(accessToken: String): BackendUser
-    suspend fun listFacilities(): List<BackendFacility>
     suspend fun createDonorProfile(accessToken: String, bloodGroup: String, locality: String): BackendDonorProfile
     suspend fun updateDonorProfile(
         accessToken: String,
@@ -221,22 +209,6 @@ class BackendApi(
         return authSession("auth/register/donor", body)
     }
 
-    override suspend fun registerHealthWorker(
-        displayName: String,
-        phoneNumber: String,
-        password: String,
-        designation: String,
-        professionalId: String
-    ): BackendSession {
-        val body = JSONObject()
-            .put("displayName", displayName)
-            .put("phoneNumber", phoneNumber)
-            .put("password", password)
-        if (designation.isNotBlank()) body.put("designation", designation)
-        if (professionalId.isNotBlank()) body.put("professionalId", professionalId)
-        return authSession("auth/register/health-worker", body)
-    }
-
     override suspend fun refresh(refreshCookie: String): BackendSession {
         val result = execute(
             method = "POST",
@@ -253,21 +225,6 @@ class BackendApi(
 
     override suspend fun getMe(accessToken: String): BackendUser =
         parseUser(execute("GET", "auth/me", token = accessToken).json)
-
-    override suspend fun listFacilities(): List<BackendFacility> {
-        val facilities = execute("GET", "facilities").array
-            ?: throw BackendProtocolException("The facility response was invalid.")
-        return (0 until facilities.length()).map { index ->
-            val item = facilities.optJSONObject(index)
-                ?: throw BackendProtocolException("The server returned an invalid facility.")
-            BackendFacility(
-                id = item.requiredString("id"),
-                name = item.requiredString("name"),
-                locality = item.optNullableString("locality").orEmpty(),
-                state = item.optNullableString("state").orEmpty()
-            )
-        }
-    }
 
     override suspend fun createDonorProfile(
         accessToken: String,
@@ -500,7 +457,10 @@ class BackendApi(
 
     private fun parseRequestSnapshot(request: JSONObject): ServerRequestSnapshot {
         val facility = request.optJSONObject("facility")
-            ?: throw BackendProtocolException("The server returned a request without facility data.")
+        val legacyLocation = listOf(
+            facility?.optNullableString("locality").orEmpty(),
+            facility?.optNullableString("state").orEmpty()
+        ).filter(String::isNotBlank).joinToString(", ")
         return ServerRequestSnapshot(
             id = request.requiredString("id"),
             requestedBloodGroup = request.requiredString("requestedBloodGroup"),
@@ -511,10 +471,15 @@ class BackendApi(
             expiresAt = request.optNullableString("expiresAt"),
             createdAt = request.requiredString("createdAt"),
             updatedAt = request.optNullableString("updatedAt") ?: request.requiredString("createdAt"),
-            facilityName = facility.optNullableString("name").orEmpty(),
-            facilityLocality = facility.optNullableString("locality").orEmpty(),
-            facilityState = facility.optNullableString("state").orEmpty(),
-            facilityId = facility.optNullableString("id").orEmpty(),
+            facilityName = request.optNullableString("facilityName")
+                ?: facility?.optNullableString("name").orEmpty(),
+            facilityLocality = facility?.optNullableString("locality").orEmpty(),
+            facilityState = facility?.optNullableString("state").orEmpty(),
+            facilityId = request.optNullableString("facilityId")
+                ?: facility?.optNullableString("id").orEmpty(),
+            facilityLocation = request.optNullableString("facilityLocation") ?: legacyLocation,
+            facilityLatitude = request.optNullableDouble("facilityLatitude"),
+            facilityLongitude = request.optNullableDouble("facilityLongitude"),
             isMine = request.optBoolean("isMine", false),
             isForSelf = if (request.has("isForSelf") && !request.isNull("isForSelf")) request.optBoolean("isForSelf") else null,
             beneficiaryName = request.optNullableString("beneficiaryName"),
@@ -565,6 +530,9 @@ class BackendApi(
 
     private fun JSONObject.optNullableString(name: String): String? =
         if (!has(name) || isNull(name)) null else optString(name).takeIf { it.isNotBlank() }
+
+    private fun JSONObject.optNullableDouble(name: String): Double? =
+        if (!has(name) || isNull(name)) null else optDouble(name).takeIf { it.isFinite() }
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

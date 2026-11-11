@@ -17,6 +17,10 @@ internal object LocalEventFactory {
         urgency: String,
         units: Int,
         facilityId: String? = null,
+        facilityName: String = "",
+        facilityLocation: String = "",
+        facilityLatitude: Double? = null,
+        facilityLongitude: Double? = null,
         isForSelf: Boolean = true,
         beneficiaryName: String? = null,
         beneficiaryRelationship: String? = null,
@@ -36,6 +40,10 @@ internal object LocalEventFactory {
             .put("urgency", urgency)
             .put("units", units)
             .put("facilityId", facilityId)
+            .put("facilityName", facilityName)
+            .put("facilityLocation", facilityLocation)
+            .put("facilityLatitude", facilityLatitude ?: JSONObject.NULL)
+            .put("facilityLongitude", facilityLongitude ?: JSONObject.NULL)
             .put("isForSelf", isForSelf)
             .put("beneficiaryName", beneficiaryName)
             .put("beneficiaryRelationship", beneficiaryRelationship)

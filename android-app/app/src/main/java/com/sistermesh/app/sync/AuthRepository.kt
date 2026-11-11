@@ -41,7 +41,7 @@ class AuthRepository(
         }
         try {
             val user = withAccessToken { api.getMe(it) }
-            if (user.role !in setOf("INDIVIDUAL", "HEALTH_WORKER")) {
+            if (user.role != "INDIVIDUAL") {
                 clearLocalSession()
                 return
             }
@@ -98,21 +98,8 @@ class AuthRepository(
         api.updateDonorProfile(it, bloodGroup, locality, isAvailable)
     }
 
-    suspend fun listFacilities(): List<BackendFacility> = api.listFacilities()
-
     suspend fun getMyDonations(): List<BackendDonorResponse> =
         withAccessToken { api.getMyDonations(it) }
-
-    suspend fun registerHealthWorker(
-        displayName: String,
-        phoneNumber: String,
-        password: String,
-        designation: String,
-        professionalId: String
-    ): BackendUser = acceptSession(
-        api.registerHealthWorker(displayName, phoneNumber, password, designation, professionalId),
-        expectedRole = "HEALTH_WORKER"
-    )
 
     suspend fun currentUser(): BackendUser = withAccessToken { token ->
         api.getMe(token).also { user ->
@@ -152,7 +139,7 @@ class AuthRepository(
 
     private suspend fun acceptSession(session: BackendSession, expectedRole: String): BackendUser {
         val user = session.user
-        if (user.role != expectedRole || user.role !in setOf("INDIVIDUAL", "HEALTH_WORKER")) {
+        if (user.role != expectedRole || user.role != "INDIVIDUAL") {
             runCatching { api.logout(session.refreshCookie) }
             throw AccountRoleMismatchException("This account does not match the role selected for this phone.")
         }

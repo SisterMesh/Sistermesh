@@ -75,37 +75,16 @@ describe('AuthService', () => {
     expect(prismaMock.refreshToken.create).not.toHaveBeenCalled();
   });
 
-  it('registers health workers as unverified and without a facility assignment', async () => {
-    const worker = {
-      ...user,
-      role: UserRole.HEALTH_WORKER,
-      donorProfile: null,
-      healthWorkerProfile: {
-        id: '00000000-0000-4000-8000-000000000034',
-        designation: 'Nurse',
-        professionalId: null,
-        verificationStatus: 'PENDING',
-        verifiedAt: null,
-        facilityId: null,
-      },
-    };
-    const prismaMock = {
-      user: { create: jest.fn().mockResolvedValue(worker) },
-      refreshToken: { create: jest.fn().mockResolvedValue({}) },
-    };
+  it('rejects public health-worker registration', async () => {
+    const prismaMock = { user: { create: jest.fn() } };
     const service = new AuthService(prismaMock as unknown as PrismaService, tokens as unknown as AccessTokenService);
-
-    const session = await service.registerHealthWorker({
-      displayName: 'Health Worker',
+    await expect(service.register({
+      displayName: 'Former Worker',
       phoneNumber: '+2348012345679',
       password: 'Correct horse battery staple 24',
-    });
-    const createData = prismaMock.user.create.mock.calls[0][0].data;
-
-    expect(createData.role).toBe(UserRole.HEALTH_WORKER);
-    expect(createData.healthWorkerProfile.create.verificationStatus).toBe('PENDING');
-    expect(createData.healthWorkerProfile.create.facilityId).toBeNull();
-    expect(session.user.role).toBe(UserRole.HEALTH_WORKER);
+      role: 'HEALTH_WORKER',
+    } as never)).rejects.toThrow('Only individual accounts can register.');
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   it('authenticates valid credentials and rejects invalid credentials generically', async () => {
