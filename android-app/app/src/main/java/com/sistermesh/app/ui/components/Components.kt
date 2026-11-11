@@ -40,6 +40,7 @@ import com.sistermesh.app.data.BloodRequest
 import com.sistermesh.app.data.BloodGroups
 import com.sistermesh.app.data.RequestStatus
 import com.sistermesh.app.communication.MeshNetworkUiState
+import com.sistermesh.app.communication.NearbyConnectionStatus
 import com.sistermesh.app.ui.theme.*
 
 // ───────────────────────── Layout ─────────────────────────
@@ -209,21 +210,31 @@ fun RequestStatus.icon() = when (this) {
 
 @Composable
 fun NetworkPill(state: MeshNetworkUiState? = null, modifier: Modifier = Modifier) {
-    val label = when {
-        state == null -> "Nearby paused"
-        !state.permissionsGranted -> "Nearby permission needed"
-        !state.bluetoothEnabled -> "Bluetooth off"
-        state.connectedDeviceIds.isNotEmpty() -> "${state.connectedDeviceIds.size} connected"
-        state.scanning && state.nearbyDeviceCount > 0 -> "${state.nearbyDeviceCount} nearby found"
-        state.scanning -> "Searching nearby"
-        else -> "Nearby paused"
+    val label = when (state?.connectionStatus) {
+        NearbyConnectionStatus.CONNECTED -> "${state.connectedDeviceIds.size} connected"
+        NearbyConnectionStatus.CONNECTING -> if (state.nearbyDeviceCount > 0) {
+            "${state.nearbyDeviceCount} nearby found"
+        } else {
+            "Searching nearby"
+        }
+        NearbyConnectionStatus.UNAVAILABLE -> "Nearby unavailable"
+        NearbyConnectionStatus.PAUSED -> "Nearby paused"
+        NearbyConnectionStatus.NOT_CONFIGURED, null -> if (state?.permissionsGranted == false) {
+            "Nearby setup needed"
+        } else {
+            "Nearby not configured"
+        }
     }
     val tone = when {
-        state?.connectedDeviceIds?.isNotEmpty() == true -> Tone.Good
-        state?.scanning == true -> Tone.Warn
+        state?.connectionStatus == NearbyConnectionStatus.CONNECTED -> Tone.Good
+        state?.connectionStatus == NearbyConnectionStatus.CONNECTING -> Tone.Warn
         else -> Tone.Neutral
     }
-    Tag(label, tone, if (state?.scanning == true) Icons.Rounded.Wifi else Icons.Rounded.WifiOff, modifier)
+    val icon = if (
+        state?.connectionStatus == NearbyConnectionStatus.CONNECTING ||
+        state?.connectionStatus == NearbyConnectionStatus.CONNECTED
+    ) Icons.Rounded.Wifi else Icons.Rounded.WifiOff
+    Tag(label, tone, icon, modifier)
 }
 
 @Composable

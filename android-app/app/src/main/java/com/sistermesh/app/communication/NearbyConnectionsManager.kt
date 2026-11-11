@@ -2,6 +2,7 @@ package com.sistermesh.app.communication
 
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
@@ -26,7 +27,9 @@ import java.util.concurrent.ConcurrentHashMap
 data class MeshNetworkUiState(
     val scanning: Boolean = false,
     val permissionsGranted: Boolean = false,
-    val bluetoothEnabled: Boolean = true,
+    val bluetoothEnabled: Boolean = false,
+    val wifiEnabled: Boolean = false,
+    val connectionStatus: NearbyConnectionStatus = NearbyConnectionStatus.NOT_CONFIGURED,
     val nearbyDeviceCount: Int = 0,
     val connectedDeviceIds: Set<String> = emptySet(),
     val pendingConnections: List<PendingNearbyConnection> = emptyList(),
@@ -37,6 +40,14 @@ data class MeshNetworkUiState(
     val statusText: String = "Nearby connections are paused.",
     val lastError: String? = null
 )
+
+enum class NearbyConnectionStatus {
+    NOT_CONFIGURED,
+    CONNECTING,
+    CONNECTED,
+    UNAVAILABLE,
+    PAUSED
+}
 
 class NearbyConnectionsManager(
     context: Context,
@@ -124,6 +135,7 @@ class NearbyConnectionsManager(
             nearbyDeviceCount = 0,
             connectedDeviceIds = emptySet(),
             pendingConnections = emptyList(),
+            connectionStatus = NearbyConnectionStatus.PAUSED,
             statusText = "Nearby connections pause when SisterMesh is not in the foreground."
         )
     }
@@ -131,8 +143,32 @@ class NearbyConnectionsManager(
     fun refreshEnvironment() {
         val permissionGranted = NearbyPermissions.hasAll(appContext)
         val bluetoothEnabled = isBluetoothEnabled()
-        updateState(permissionsGranted = permissionGranted, bluetoothEnabled = bluetoothEnabled)
+        val wifiEnabled = isWifiEnabled()
+        updateState(
+            permissionsGranted = permissionGranted,
+            bluetoothEnabled = bluetoothEnabled,
+            wifiEnabled = wifiEnabled
+        )
         reconcile()
+    }
+
+    fun retry() {
+        if (!foreground) {
+            updateState(
+                connectionStatus = NearbyConnectionStatus.PAUSED,
+                statusText = "Open SisterMesh in the foreground to search for nearby phones."
+            )
+            return
+        }
+        stopTransport()
+        updateState(
+            scanning = false,
+            nearbyDeviceCount = 0,
+            connectedDeviceIds = emptySet(),
+            pendingConnections = emptyList(),
+            lastError = null
+        )
+        refreshEnvironment()
     }
 
     fun approveConnection(endpointId: String) {
@@ -153,25 +189,32 @@ class NearbyConnectionsManager(
         running = true
         updateState(
             scanning = true,
+            connectionStatus = NearbyConnectionStatus.CONNECTING,
             lastError = null,
-            statusText = if (mutableState.value.bluetoothEnabled) {
-                "Searching for nearby SisterMesh devices."
-            } else {
-                "Bluetooth is off; nearby discovery may be limited."
-            }
+            statusText = "Searching for nearby SisterMesh phones. Internet access is not required."
         )
         scope.launch { safelyFlushOutbox() }
     }
 
     override fun onStartFailed(message: String) {
+        runCatching { transport.stop() }
         starting = false
         running = false
-        updateState(scanning = false, lastError = message, statusText = "Nearby discovery could not start.")
+        updateState(
+            scanning = false,
+            connectionStatus = NearbyConnectionStatus.UNAVAILABLE,
+            lastError = message,
+            statusText = "Nearby connection is unavailable. Check device settings and retry."
+        )
     }
 
     override fun onEndpointFound(endpointId: String, endpointName: String) {
         discovered[endpointId] = endpointName
-        updateState(nearbyDeviceCount = discovered.size)
+        updateState(
+            nearbyDeviceCount = discovered.size,
+            connectionStatus = NearbyConnectionStatus.CONNECTING,
+            statusText = "A nearby phone was found. Establishing a verified connection."
+        )
         if (requestedEndpoints.add(endpointId) && !connectedEndpoints.contains(endpointId)) {
             transport.requestConnection(endpointId)
         }
@@ -188,6 +231,7 @@ class NearbyConnectionsManager(
             .filterNot { it.endpointId == connection.endpointId } + connection
         updateState(
             pendingConnections = pending,
+            connectionStatus = NearbyConnectionStatus.CONNECTING,
             statusText = "Compare the security numbers on both phones before connecting."
         )
     }
@@ -195,7 +239,10 @@ class NearbyConnectionsManager(
     override fun onConnectionAccepted(endpointId: String) {
         requestedEndpoints.remove(endpointId)
         connectedEndpoints.add(endpointId)
-        updateState(statusText = "Verifying the connected device.")
+        updateState(
+            connectionStatus = NearbyConnectionStatus.CONNECTING,
+            statusText = "Verifying the nearby device before sharing."
+        )
         scope.launch {
             runCatching {
                 val identity = repository.identityForLocalDevice()
@@ -214,6 +261,7 @@ class NearbyConnectionsManager(
         endpointDeviceIds.remove(endpointId)
         updateState(
             connectedDeviceIds = endpointDeviceIds.values.toSet(),
+            connectionStatus = if (running) NearbyConnectionStatus.CONNECTING else NearbyConnectionStatus.UNAVAILABLE,
             pendingConnections = mutableState.value.pendingConnections.filterNot { it.endpointId == endpointId },
             lastError = message
         )
@@ -225,6 +273,11 @@ class NearbyConnectionsManager(
         requestedEndpoints.remove(endpointId)
         updateState(
             connectedDeviceIds = endpointDeviceIds.values.toSet(),
+            connectionStatus = if (endpointDeviceIds.isEmpty()) {
+                if (running) NearbyConnectionStatus.CONNECTING else NearbyConnectionStatus.PAUSED
+            } else {
+                NearbyConnectionStatus.CONNECTED
+            },
             statusText = if (endpointDeviceIds.isEmpty()) "No trusted devices connected." else "A nearby device disconnected."
         )
     }
@@ -247,6 +300,7 @@ class NearbyConnectionsManager(
                     endpointDeviceIds[endpointId] = wirePacket.identity.deviceId
                     updateState(
                         connectedDeviceIds = endpointDeviceIds.values.toSet(),
+                        connectionStatus = NearbyConnectionStatus.CONNECTED,
                         lastError = null,
                         statusText = "Connected to a trusted nearby device."
                     )
@@ -284,22 +338,51 @@ class NearbyConnectionsManager(
     }
 
     private fun reconcile() {
-        if (!foreground || !mutableState.value.permissionsGranted) {
+        if (!foreground) {
             stopTransport()
-            if (!mutableState.value.permissionsGranted) {
-                updateState(
-                    scanning = false,
-                    statusText = "Nearby permissions are needed to connect to phones."
-                )
-            }
+            updateState(
+                scanning = false,
+                connectionStatus = NearbyConnectionStatus.PAUSED,
+                statusText = "Nearby search starts while SisterMesh is in the foreground."
+            )
+            return
+        }
+        if (!mutableState.value.permissionsGranted) {
+            stopTransport()
+            updateState(
+                scanning = false,
+                connectionStatus = NearbyConnectionStatus.NOT_CONFIGURED,
+                lastError = null,
+                statusText = "Allow nearby-device permissions to connect to phones."
+            )
+            return
+        }
+        if (!mutableState.value.bluetoothEnabled && !mutableState.value.wifiEnabled) {
+            stopTransport()
+            val message = "Turn on Bluetooth or Wi-Fi to search for nearby phones. Internet is not required."
+            updateState(
+                scanning = false,
+                connectionStatus = NearbyConnectionStatus.UNAVAILABLE,
+                lastError = message,
+                statusText = message
+            )
             return
         }
         if (running || starting) return
         starting = true
-        updateState(lastError = null, statusText = "Starting nearby discovery.")
+        updateState(
+            connectionStatus = NearbyConnectionStatus.CONNECTING,
+            lastError = null,
+            statusText = "Starting nearby discovery."
+        )
         runCatching { transport.start(this) }.onFailure {
             starting = false
-            updateState(scanning = false, lastError = it.message, statusText = "Nearby discovery could not start.")
+            updateState(
+                scanning = false,
+                connectionStatus = NearbyConnectionStatus.UNAVAILABLE,
+                lastError = it.message,
+                statusText = "Nearby connection is unavailable. Check device settings and retry."
+            )
         }
     }
 
@@ -377,6 +460,8 @@ class NearbyConnectionsManager(
         scanning: Boolean? = null,
         permissionsGranted: Boolean? = null,
         bluetoothEnabled: Boolean? = null,
+        wifiEnabled: Boolean? = null,
+        connectionStatus: NearbyConnectionStatus? = null,
         nearbyDeviceCount: Int? = null,
         connectedDeviceIds: Set<String>? = null,
         pendingConnections: List<PendingNearbyConnection>? = null,
@@ -389,6 +474,8 @@ class NearbyConnectionsManager(
             scanning = scanning ?: current.scanning,
             permissionsGranted = permissionsGranted ?: current.permissionsGranted,
             bluetoothEnabled = bluetoothEnabled ?: current.bluetoothEnabled,
+            wifiEnabled = wifiEnabled ?: current.wifiEnabled,
+            connectionStatus = connectionStatus ?: current.connectionStatus,
             nearbyDeviceCount = nearbyDeviceCount ?: current.nearbyDeviceCount,
             connectedDeviceIds = connectedDeviceIds ?: current.connectedDeviceIds,
             pendingConnections = pendingConnections ?: current.pendingConnections,
@@ -404,4 +491,8 @@ class NearbyConnectionsManager(
         ) return false
         return runCatching { BluetoothAdapter.getDefaultAdapter()?.isEnabled ?: false }.getOrDefault(false)
     }
+
+    private fun isWifiEnabled(): Boolean = runCatching {
+        (appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)?.isWifiEnabled == true
+    }.getOrDefault(false)
 }

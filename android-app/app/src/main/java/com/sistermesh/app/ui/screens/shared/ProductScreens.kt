@@ -74,6 +74,16 @@ fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
         Text(if (donorMode) "Donate blood" else "Find blood", style = MaterialTheme.typography.headlineLarge, color = Ink)
         Spacer(Modifier.height(16.dp))
         NetworkPill(vm.meshState)
+        TextButton(
+            onClick = { nav.navigate("permissions") },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (vm.meshState.connectionStatus == com.sistermesh.app.communication.NearbyConnectionStatus.NOT_CONFIGURED ||
+                    vm.meshState.connectionStatus == com.sistermesh.app.communication.NearbyConnectionStatus.UNAVAILABLE
+                ) "Set up or retry nearby access" else "Nearby connection settings"
+            )
+        }
         if (!vm.isOnline) {
             Spacer(Modifier.height(10.dp))
             Notice("Offline mode is on. Requests are saved on this phone and shared with nearby donors.")
@@ -102,6 +112,57 @@ fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
                 Text("You can volunteer as a donor at any time.", color = Muted)
                 Spacer(Modifier.height(10.dp))
                 SmButton("Donate blood", { nav.navigate("donate") }, style = com.sistermesh.app.ui.components.BtnStyle.Soft, icon = Icons.Rounded.Favorite)
+            }
+        }
+        SectionTitle("Requests for your blood group", action = "View all", onAction = { nav.navigate("find_blood") })
+        Text(
+            "Nearby and account requests appear here. Blood-group filters are not medical confirmation.",
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(8.dp))
+        val matchingRequests = vm.incoming
+            .sortedBy { it.status != RequestStatus.OPEN && it.status != RequestStatus.PARTIALLY_FILLED }
+            .take(3)
+        if (matchingRequests.isEmpty()) {
+            SmCard {
+                Text("No matching requests are available yet.", style = MaterialTheme.typography.titleMedium)
+            }
+        } else {
+            matchingRequests.forEach { request ->
+                SmCard(onClick = { nav.navigate("incoming/${request.id}") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(request.bloodGroup, style = MaterialTheme.typography.titleLarge, color = Teal)
+                        Spacer(Modifier.weight(1f))
+                        Tag(request.status.label, request.status.tone(), request.status.icon())
+                    }
+                    Text(
+                        "${request.urgency.name.lowercase().replaceFirstChar(Char::uppercase)} · ${request.units} unit${if (request.units == 1) "" else "s"}",
+                        color = Muted
+                    )
+                    Text(request.facility, style = MaterialTheme.typography.bodyMedium)
+                    if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+        SectionTitle("Your requests", action = "View all", onAction = { nav.navigate("activity") })
+        if (vm.requests.isEmpty()) {
+            SmCard {
+                Text("Requests you create will stay available here.", color = Muted)
+            }
+        } else {
+            vm.requests.take(3).forEach { request ->
+                SmCard(onClick = { nav.navigate("activity") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(request.bloodGroup, style = MaterialTheme.typography.titleLarge, color = Teal)
+                        Spacer(Modifier.weight(1f))
+                        Tag(request.status.label, request.status.tone(), request.status.icon())
+                    }
+                    Text(request.facility, style = MaterialTheme.typography.bodyMedium)
+                    if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
+                }
+                Spacer(Modifier.height(10.dp))
             }
         }
         Spacer(Modifier.height(24.dp))

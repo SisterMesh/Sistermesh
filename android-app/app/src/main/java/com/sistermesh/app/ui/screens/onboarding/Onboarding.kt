@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -209,9 +210,11 @@ fun PermissionsScreen(onDone: () -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext as SisterMeshApplication
     var missing by remember { mutableStateOf(NearbyPermissions.missing(context)) }
+    var permissionAttempted by remember { mutableStateOf(false) }
     val bluetoothEnabled = remember {
         mutableStateOf(runCatching { BluetoothAdapter.getDefaultAdapter()?.isEnabled == true }.getOrDefault(false))
     }
+    val nearbyState by app.nearbyManager.state.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     fun refresh() {
         missing = NearbyPermissions.missing(context)
@@ -233,17 +236,54 @@ fun PermissionsScreen(onDone: () -> Unit) {
     val all = missing.isEmpty()
     Page(footer = {
         SmButton(if (all) "Continue" else "Enable nearby access", {
-            if (all) onDone() else permissionLauncher.launch(missing.toTypedArray())
+            if (all) onDone() else {
+                permissionAttempted = true
+                permissionLauncher.launch(missing.toTypedArray())
+            }
         })
-        if (!all) {
+        if (all) {
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Continue without nearby access") }
+            TextButton(
+                onClick = { app.nearbyManager.retry() },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Retry nearby connection") }
+        } else {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+                Text("Continue without nearby access")
+            }
+            if (permissionAttempted) {
+                TextButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Open app settings") }
+            }
         }
     }) {
         Spacer(Modifier.height(24.dp))
+        SmCard {
+            Text("Nearby connection", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(nearbyState.statusText, color = Muted)
+            nearbyState.lastError?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(it, color = Coral, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
         val rows = buildList {
             add(
                 Perm("Bluetooth", Icons.Rounded.Bluetooth) to if (bluetoothEnabled.value) "On" else "Off"
+            )
+            add(
+                Perm("Wi-Fi", Icons.Rounded.Wifi) to if (nearbyState.wifiEnabled) "On" else "Off"
             )
             add(
                 Perm("Nearby device access", Icons.Rounded.Wifi) to if (all) "Allowed" else "Needed"
@@ -284,6 +324,12 @@ fun PermissionsScreen(onDone: () -> Unit) {
                 onClick = { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Bluetooth settings") }
+        }
+        if (!nearbyState.wifiEnabled) {
+            TextButton(
+                onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Open Wi-Fi settings") }
         }
     }
 }
