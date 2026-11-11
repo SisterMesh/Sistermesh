@@ -72,11 +72,6 @@ fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
     Page(bottomBar = { TabBar("home", nav) }) {
         Spacer(Modifier.height(18.dp))
         Text(if (donorMode) "Donate blood" else "Find blood", style = MaterialTheme.typography.headlineLarge, color = Ink)
-        Text(
-            if (donorMode) "See nearby requests and choose whether you can help." else "Create a request for yourself or someone else.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Muted
-        )
         Spacer(Modifier.height(16.dp))
         NetworkPill(vm.meshState)
         if (!vm.isOnline) {
@@ -87,7 +82,6 @@ fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
             SectionTitle("Need blood?")
             SmCard {
                 Text("Create a blood request", style = MaterialTheme.typography.titleLarge)
-                Text("Add the donation facility and location so donors know where to go.", color = Muted)
                 Spacer(Modifier.height(12.dp))
                 SmButton("Request blood", { nav.navigate("create_request") }, icon = Icons.Rounded.LocalHospital)
             }
@@ -95,7 +89,6 @@ fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
             SectionTitle("Ready to help?")
             SmCard {
                 Text("Find blood requests", style = MaterialTheme.typography.titleLarge)
-                Text("Review the blood group, units, and donation location before responding.", color = Muted)
                 Spacer(Modifier.height(12.dp))
                 SmButton("Browse requests", { nav.navigate("find_blood") }, icon = Icons.Rounded.Favorite)
             }
@@ -123,7 +116,6 @@ fun FindBloodScreen(vm: AppViewModel, nav: NavController) {
     Page(bottomBar = { TabBar("find_blood", nav) }) {
         Spacer(Modifier.height(18.dp))
         Text("Find blood", style = MaterialTheme.typography.headlineLarge)
-        Text("Review the facility and location before choosing to help.", color = Muted)
         Spacer(Modifier.height(12.dp))
         NetworkPill(vm.meshState)
         if (vm.profile?.bloodGroup.isNullOrBlank()) {
@@ -136,7 +128,6 @@ fun FindBloodScreen(vm: AppViewModel, nav: NavController) {
             if (requests.isEmpty()) {
                 SmCard {
                     Text("No matching requests yet.", style = MaterialTheme.typography.titleMedium)
-                    Text("Check again when nearby requests arrive.", color = Muted)
                 }
             } else {
                 requests.forEach { request ->
@@ -173,12 +164,10 @@ fun DonateScreen(vm: AppViewModel, nav: NavController) {
     Page(bottomBar = { TabBar("donate", nav) }) {
         Spacer(Modifier.height(18.dp))
         Text("Donate", style = MaterialTheme.typography.headlineLarge)
-        Text("Donating is optional. You decide which requests to answer.", color = Muted)
         Spacer(Modifier.height(18.dp))
         if (!joined) {
             SmCard {
                 Text("Join the voluntary donor network", style = MaterialTheme.typography.titleLarge)
-                Text("Your blood group is shared only to find compatible requests. Donors never see patient name or contact details.", color = Muted)
                 Spacer(Modifier.height(18.dp))
                 Text("Blood group", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
@@ -200,16 +189,13 @@ fun DonateScreen(vm: AppViewModel, nav: NavController) {
                 Text("Blood group ${profile?.bloodGroup}", style = MaterialTheme.typography.bodyLarge)
                 if (profile?.area?.isNotBlank() == true) Text(profile.area, color = Muted)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Available to respond", style = MaterialTheme.typography.titleMedium)
-                        Text("You can change this at any time.", color = Muted)
-                    }
+                    Text("Available to respond", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     Switch(checked = vm.available, onCheckedChange = vm::updateAvailability)
                 }
             }
-            SectionTitle("Approved requests", action = "Find all", onAction = { nav.navigate("find_blood") })
+            SectionTitle("Open requests", action = "Find all", onAction = { nav.navigate("find_blood") })
             if (active.isEmpty()) {
-                SmCard { Text("No matching approved requests right now.", color = Muted) }
+                SmCard { Text("No open requests right now.", color = Muted) }
             } else {
                 active.take(3).forEach { request ->
                     SmCard(onClick = { nav.navigate("incoming/${request.id}") }) {
@@ -231,7 +217,6 @@ fun ActivityScreen(vm: AppViewModel, nav: NavController) {
     Page(bottomBar = { TabBar("activity", nav) }) {
         Spacer(Modifier.height(18.dp))
         Text("My activity", style = MaterialTheme.typography.headlineLarge)
-        Text("Requests and donation responses stay available on this device.", color = Muted)
         SectionTitle("My requests")
         if (outgoing.isEmpty()) {
             SmCard { Text("No requests yet.", color = Muted) }
@@ -302,7 +287,6 @@ fun EditRequestSubmissionScreen(vm: AppViewModel, nav: NavController, requestId:
         if (request == null) {
             Notice("This request is not available on this device.")
         } else {
-            Text("Update the request details.", color = Muted)
             SectionTitle("Blood needed")
             BloodGroupPicker(group, { group = it }, error = tried && group.isBlank())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -405,7 +389,7 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
     }) {
         BackHeader("New blood request", { nav.popBackStack() })
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Dictate request details", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
             TextButton(onClick = { voiceSheet = true }) {
                 Icon(Icons.Rounded.Mic, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
@@ -414,23 +398,12 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
         }
         if (voiceTranscript.isNotBlank()) {
             SmCard(tint = MintSoft, border = Mint) {
-                Text("Transcript reviewed", style = MaterialTheme.typography.labelMedium, color = Teal)
+                Text("Voice transcript", style = MaterialTheme.typography.labelMedium, color = Teal)
                 Spacer(Modifier.height(4.dp))
                 Text(voiceTranscript, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Check the fields below. Missing or ambiguous details were not filled automatically.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted
-                )
             }
             Spacer(Modifier.height(10.dp))
         }
-        Text(
-            "Enter the place where donors should go. Requests are shared directly with eligible donors.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Muted
-        )
         if (!vm.isOnline) {
             Spacer(Modifier.height(10.dp))
             Notice("Saved on this phone. It can be shared with nearby SisterMesh phones over Bluetooth.")
@@ -488,7 +461,7 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(8.dp))
         SmField("Private note (optional)", information, { information = it })
         Spacer(Modifier.height(12.dp))
-        Notice("Donors see the blood group, urgency, units, and donation destination. Patient names and private notes stay on the requester’s phone.")
+        Notice("Donors see the destination, not patient names or private notes.")
         Spacer(Modifier.height(24.dp))
     }
 

@@ -76,14 +76,11 @@ fun WelcomeScreen(onStart: () -> Unit) {
         Spacer(Modifier.height(40.dp))
         Text("Together, we can save lives.", style = MaterialTheme.typography.displayLarge)
         Spacer(Modifier.height(16.dp))
-        Text(
-            "When a mother needs blood and the network is down, SisterMesh finds willing donors nearby using device to device signals. No data or internet needed.",
-            style = MaterialTheme.typography.bodyLarge, color = Muted
-        )
+        Text("Find blood or offer to donate, even when the internet is down.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(36.dp))
-        Feature(Icons.Rounded.WifiOff, "Works offline", "Requests travel between nearby phones.")
-        Feature(Icons.Rounded.Favorite, "You decide", "Every request is voluntary. Say yes or no.")
-        Feature(Icons.Rounded.Lock, "Private by design", "No phone numbers or exact locations are shared.")
+        Feature(Icons.Rounded.WifiOff, "Works offline", "Nearby phone sharing.")
+        Feature(Icons.Rounded.Favorite, "You decide", "Helping is always voluntary.")
+        Feature(Icons.Rounded.Lock, "Private by design", "Personal contact details stay private.")
     }
 }
 
@@ -110,7 +107,6 @@ fun UseModeScreen(vm: AppViewModel, onBack: () -> Unit, onContinue: (UseMode) ->
         Spacer(Modifier.height(12.dp))
         Text("How will you use SisterMesh?", style = MaterialTheme.typography.headlineLarge)
         Spacer(Modifier.height(8.dp))
-        Text("Choose how you want to use the app.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(28.dp))
         RoleCard(Icons.Rounded.Search, "I want to find blood", "Create a request for yourself or someone else.", mode == UseMode.FIND_BLOOD) { vm.pendingUseMode = UseMode.FIND_BLOOD }
         Spacer(Modifier.height(14.dp))
@@ -175,17 +171,7 @@ fun DonorRegistrationScreen(vm: AppViewModel, mode: UseMode, onBack: () -> Unit,
         })
     }) {
         BackHeader(if (mode == UseMode.FIND_BLOOD) "Find blood" else "Donate blood", onBack)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            if (mode == UseMode.FIND_BLOOD) {
-                "Create a profile to request blood for yourself or someone else."
-            } else {
-                "Create a donor profile to see nearby requests and choose when you can help."
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = Muted
-        )
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
         SmField("Name or display name", name, { name = it }, error = if (tried && name.isBlank()) "Enter a name" else null)
         Spacer(Modifier.height(4.dp))
         if (mode == UseMode.FIND_BLOOD) {
@@ -209,14 +195,14 @@ fun DonorRegistrationScreen(vm: AppViewModel, mode: UseMode, onBack: () -> Unit,
         SmField("Phone number (optional)", phone, { phone = it.filter { c -> c.isDigit() || c == '+' } }, keyboard = KeyboardType.Phone)
         if (wantsToDonate) {
             Spacer(Modifier.height(12.dp))
-            Notice("Registering does not confirm medical eligibility. A health professional makes that decision.")
+            Notice("A health professional assesses donation eligibility.")
         }
         Spacer(Modifier.height(24.dp))
     }
 }
 
 // S06
-private data class Perm(val title: String, val why: String, val icon: ImageVector)
+private data class Perm(val title: String, val icon: ImageVector)
 
 @Composable
 fun PermissionsScreen(onDone: () -> Unit) {
@@ -254,38 +240,22 @@ fun PermissionsScreen(onDone: () -> Unit) {
             TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Continue without nearby access") }
         }
     }) {
-        Spacer(Modifier.height(28.dp))
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(24.dp))
         val rows = buildList {
             add(
-                Perm(
-                    "Bluetooth",
-                    "Used as one of the nearby radio options. Bluetooth is ${if (bluetoothEnabled.value) "on" else "off"}.",
-                    Icons.Rounded.Bluetooth
-                ) to if (bluetoothEnabled.value) "On" else "Off"
+                Perm("Bluetooth", Icons.Rounded.Bluetooth) to if (bluetoothEnabled.value) "On" else "Off"
             )
             add(
-                Perm(
-                    "Nearby device access",
-                    "Required to discover and exchange messages with nearby phones.",
-                    Icons.Rounded.Wifi
-                ) to if (all) "Allowed" else "Needed"
+                Perm("Nearby device access", Icons.Rounded.Wifi) to if (all) "Allowed" else "Needed"
             )
             if (Build.VERSION.SDK_INT < 33) {
                 add(
-                    Perm(
-                        "Location permission",
-                        "Older Android versions require this for nearby scanning. SisterMesh does not request or send your location.",
-                        Icons.Rounded.LocationOn
-                    ) to if (Manifest.permission.ACCESS_FINE_LOCATION !in missing) "Allowed" else "Needed"
+                    Perm("Location permission", Icons.Rounded.LocationOn) to
+                        if (Manifest.permission.ACCESS_FINE_LOCATION !in missing) "Allowed" else "Needed"
                 )
             } else {
                 add(
-                    Perm(
-                        "Location",
-                        "Your location is not required or sent.",
-                        Icons.Rounded.LocationOn
-                    ) to "Not needed"
+                    Perm("Location", Icons.Rounded.LocationOn) to "Not needed"
                 )
             }
         }
@@ -298,7 +268,6 @@ fun PermissionsScreen(onDone: () -> Unit) {
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(p.title, style = MaterialTheme.typography.titleMedium)
-                        Text(p.why, style = MaterialTheme.typography.bodyMedium, color = Muted)
                     }
                     Spacer(Modifier.width(8.dp))
                     Tag(

@@ -65,7 +65,6 @@ fun CoordinationScreen(vm: AppViewModel, nav: NavController, id: String, ref: St
         Notice("Acceptance does not guarantee medical eligibility or that a donation will happen. Screening decides.")
 
         SectionTitle("Messages")
-        if (vm.messages.isEmpty()) Text("Pick a quick message to send. Phone numbers stay private.", style = MaterialTheme.typography.bodyMedium, color = Muted)
         vm.messages.forEach { m ->
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = if (m.mine) Arrangement.End else Arrangement.Start) {
                 Box(
@@ -138,15 +137,7 @@ fun ReceiptScreen(vm: AppViewModel, nav: NavController, id: String) {
             }
         }
         Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Tag("Saved on this phone", Tone.Good, Icons.Rounded.Check)
-            Tag("Anchor pending", Tone.Warn, Icons.Rounded.Schedule)
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "When you're online, this hash can be anchored on Polygon Amoy. Names, blood group and medical details are never put on a public blockchain.",
-            style = MaterialTheme.typography.bodyMedium, color = Muted
-        )
+        Tag("Saved on this phone", Tone.Good, Icons.Rounded.Check)
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -160,7 +151,6 @@ fun HistoryScreen(vm: AppViewModel, nav: NavController) {
         Text("History", style = MaterialTheme.typography.headlineLarge)
         Spacer(Modifier.height(8.dp))
         run {
-            Text("Requests you received and the receipts you hold.", style = MaterialTheme.typography.bodyLarge, color = Muted)
             SectionTitle("Consent receipts")
             if (vm.receipts.isEmpty()) Text("No receipts yet.", style = MaterialTheme.typography.bodyMedium, color = Muted)
             vm.receipts.forEach { r ->

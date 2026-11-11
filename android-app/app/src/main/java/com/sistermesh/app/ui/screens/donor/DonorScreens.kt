@@ -48,7 +48,7 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (on) "Nearby clinics can send you requests." else "You won't receive requests until you switch back on.",
+                        if (on) "You can receive nearby requests." else "Turn availability on to receive requests.",
                         style = MaterialTheme.typography.bodyMedium, color = if (on) Mint else Muted
                     )
                 }
@@ -58,11 +58,11 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
         }
 
         Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard(vm.incoming.size.toString(), "Received", Modifier.weight(1f))
-            StatCard(vm.incoming.count { it.decision == Decision.ACCEPTED }.toString(), "Accepted", Modifier.weight(1f))
-            StatCard(vm.receipts.size.toString(), "Receipts", Modifier.weight(1f))
-        }
+        Text(
+            "${vm.incoming.size} received · ${vm.incoming.count { it.decision == Decision.ACCEPTED }} accepted · ${vm.receipts.size} receipts",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Muted
+        )
 
         SectionTitle("Requests near you")
         when {

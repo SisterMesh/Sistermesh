@@ -71,11 +71,11 @@ fun SyncStatusCard(vm: AppViewModel, nav: NavController) {
         Spacer(Modifier.height(10.dp))
         Text(
             when {
-                currentUser == null && vm.accountState == AccountState.SavedOffline -> "Saved account available when internet returns."
-                currentUser == null -> "Connect your account to sync across devices."
-                vm.accountState is AccountState.RoleMismatch -> "The signed-in account role does not match this local profile."
-                !vm.isAccountLinked -> "The account is connected, but this phone's local records are not linked yet."
-                else -> "Signed in as ${currentUser.displayName}. Local work continues while offline."
+                currentUser == null && vm.accountState == AccountState.SavedOffline -> "Account saved. Sync resumes when you're online."
+                currentUser == null -> "Connect an account to sync across devices."
+                vm.accountState is AccountState.RoleMismatch -> "This account does not match the local profile."
+                !vm.isAccountLinked -> "Link this phone's records to sync them."
+                else -> "Signed in. Local work remains available offline."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = Muted
@@ -282,10 +282,8 @@ fun SyncReviewScreen(vm: AppViewModel, nav: NavController) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.Icon(Icons.Rounded.Warning, null, tint = Coral)
                 Spacer(Modifier.width(8.dp))
-                Text("No local data is automatically overwritten to resolve a conflict.", style = MaterialTheme.typography.titleMedium)
+                Text("Local data is never overwritten automatically.", style = MaterialTheme.typography.titleMedium)
             }
-            Spacer(Modifier.height(6.dp))
-            Text("The backend currently provides read-only conflict details. Review these items; this screen does not guess which version is correct.", color = Muted)
         }
         SectionTitle("Conflicts (${vm.conflicts.size})")
         if (vm.conflicts.isEmpty()) {
@@ -306,9 +304,7 @@ fun SyncReviewScreen(vm: AppViewModel, nav: NavController) {
 @Composable
 private fun ConflictCard(conflict: SyncConflictEntity) {
     SmCard {
-        Text(conflict.eventType ?: "Sync conflict", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(4.dp))
-        Text(conflict.errorCode, color = Coral, style = MaterialTheme.typography.labelMedium)
+        Text(conflict.eventType?.let(::humanEventLabel) ?: "Sync issue", style = MaterialTheme.typography.titleMedium)
         Text(conflict.explanation, color = Muted, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(4.dp))
         Text(formatSyncTime(conflict.occurredAt), color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -319,18 +315,34 @@ private fun ConflictCard(conflict: SyncConflictEntity) {
 private fun FailedEventCard(event: SyncEventEntity) {
     SmCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(event.eventType, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            Tag(event.status, if (event.status == "CONFLICT" || event.status == "REJECTED") Tone.Danger else Tone.Warn)
-        }
-        event.serverErrorCode?.let {
-            Spacer(Modifier.height(4.dp))
-            Text(it, color = Coral, style = MaterialTheme.typography.labelMedium)
+            Text(humanEventLabel(event.eventType), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Tag(
+                humanSyncStatus(event.status),
+                if (event.status == "CONFLICT" || event.status == "REJECTED") Tone.Danger else Tone.Warn
+            )
         }
         event.serverExplanation?.takeIf(String::isNotBlank)?.let {
             Text(it, color = Muted, style = MaterialTheme.typography.bodyMedium)
         }
         event.lastAttemptedAt?.let { Text(formatSyncTime(it), color = Muted, style = MaterialTheme.typography.bodySmall) }
     }
+}
+
+private fun humanEventLabel(eventType: String): String = when (eventType) {
+    "request.create" -> "Blood request"
+    "request.update" -> "Request update"
+    "request.cancel" -> "Request cancellation"
+    "donor-response.accept" -> "Donation response"
+    "donor-response.decline" -> "Donation response"
+    "donor.withdraw" -> "Withdrawn response"
+    else -> "Sync issue"
+}
+
+private fun humanSyncStatus(status: String): String = when (status.uppercase()) {
+    "CONFLICT" -> "Needs review"
+    "REJECTED" -> "Not accepted"
+    "FAILED" -> "Couldn't sync"
+    else -> "Waiting"
 }
 
 private fun syncStatusLabel(status: String): String = when (status) {
