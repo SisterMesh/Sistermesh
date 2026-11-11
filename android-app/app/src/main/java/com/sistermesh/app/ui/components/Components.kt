@@ -194,7 +194,8 @@ fun Tag(text: String, tone: Tone = Tone.Neutral, icon: ImageVector? = null, modi
 }
 
 fun RequestStatus.tone() = when (this) {
-    RequestStatus.SEARCHING, RequestStatus.WAITING -> Tone.Warn
+    RequestStatus.SEARCHING, RequestStatus.WAITING,
+    RequestStatus.PENDING, RequestStatus.NEEDS_INFORMATION -> Tone.Warn
     RequestStatus.OPEN, RequestStatus.PARTIALLY_FILLED,
     RequestStatus.ACCEPTED, RequestStatus.COMPLETED, RequestStatus.FULFILLED -> Tone.Good
     RequestStatus.REJECTED -> Tone.Danger
@@ -202,7 +203,8 @@ fun RequestStatus.tone() = when (this) {
 }
 
 fun RequestStatus.icon() = when (this) {
-    RequestStatus.SEARCHING, RequestStatus.WAITING -> Icons.Rounded.Schedule
+    RequestStatus.SEARCHING, RequestStatus.WAITING,
+    RequestStatus.PENDING, RequestStatus.NEEDS_INFORMATION -> Icons.Rounded.Schedule
     RequestStatus.OPEN, RequestStatus.PARTIALLY_FILLED -> Icons.Rounded.Favorite
     RequestStatus.ACCEPTED, RequestStatus.COMPLETED, RequestStatus.FULFILLED -> Icons.Rounded.Check
     RequestStatus.REJECTED, RequestStatus.CANCELLED, RequestStatus.EXPIRED -> Icons.Rounded.Close

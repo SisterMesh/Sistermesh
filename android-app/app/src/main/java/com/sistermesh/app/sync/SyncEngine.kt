@@ -39,6 +39,30 @@ class SyncEngine(
 ) {
     private val runMutex = Mutex()
 
+    /**
+     * Refreshes the signed-in user's private request list and preliminary blood-group feed.
+     * Snapshots are upserted by server ID so backend and Nearby deliveries share one Room row.
+     */
+    suspend fun refreshRequestFeed(user: BackendUser? = null): Set<String> {
+        val activeUser = user ?: auth.currentUser()
+        if (activeUser.role != "INDIVIDUAL" || activeUser.status != "ACTIVE") {
+            throw BackendProtocolException("An active individual account is required to load requests.")
+        }
+        val mine = auth.getMyRequests()
+        val eligible = if (activeUser.donorProfileId != null && !activeUser.donorBloodGroup.isNullOrBlank()) {
+            auth.getEligibleRequests()
+        } else {
+            emptyList()
+        }
+        val snapshots = (mine + eligible)
+            .distinctBy { it.id }
+            .sortedBy { it.updatedAt }
+        database.withTransaction {
+            snapshots.forEach { applyFeedSnapshot(it, activeUser.id) }
+        }
+        return mine.mapTo(linkedSetOf()) { it.id }
+    }
+
     suspend fun run(): SyncOutcome {
         if (!runMutex.tryLock()) return SyncOutcome.ALREADY_RUNNING
         try {
@@ -423,8 +447,13 @@ class SyncEngine(
             throw BackendProtocolException("The server returned an invalid request ID.")
         }
         val requests = database.emergencyRequestDao()
-        val existing = requests.getByServerId(requestId)
-        val localId = existing?.localId ?: "SYNC-$requestId"
+        val existing = findExistingRequest(
+            requestId,
+            serverRequest.clientRequestId,
+            user.id,
+            serverRequest.isMine
+        )
+        val localId = existing?.localId ?: accountSnapshotLocalId(user.id, requestId)
         val preserveLocalEdits = database.syncEventDao().hasUnresolvedForEntity(localId)
         val lastCursor = existing?.lastServerCursor?.let(::BigInteger) ?: BigInteger.ZERO
         if (cursorValue > lastCursor) {
@@ -441,9 +470,13 @@ class SyncEngine(
             val current = existing
             val canSeePrivateDetails = serverRequest.isMine
             val publishedToDonors = status == "OPEN" || status == "PARTIALLY_FILLED"
+            val wasPublicToDonors = publishedToDonors ||
+                change.fromStatus in setOf("OPEN", "PARTIALLY_FILLED") ||
+                change.toStatus in setOf("OPEN", "PARTIALLY_FILLED") ||
+                current?.kind == "INCOMING"
             val requestKind = when {
                 serverRequest.isMine -> "OUTGOING"
-                publishedToDonors -> "INCOMING"
+                wasPublicToDonors -> "INCOMING"
                 else -> "HIDDEN"
             }
             val updated = (current ?: EmergencyRequestEntity(
@@ -507,6 +540,9 @@ class SyncEngine(
                 syncStatus = if (preserveLocalEdits) current?.syncStatus ?: "PENDING" else "SYNCED"
             )
             requests.upsert(updated)
+            if (requestKind == "OUTGOING") {
+                requests.hideOtherIncomingForServerId(requestId, localId)
+            }
             if (requestKind == "OUTGOING" && publishedToDonors) {
                 database.syncEventDao().setRequestPublicationStatus(localId, status)
             }
@@ -527,6 +563,145 @@ class SyncEngine(
             )
         )
     }
+
+    private suspend fun applyFeedSnapshot(serverRequest: ServerRequestSnapshot, accountId: String) {
+        if (!runCatching { UUID.fromString(serverRequest.id) }.isSuccess) {
+            throw BackendProtocolException("The server returned an invalid request ID.")
+        }
+        val requests = database.emergencyRequestDao()
+        val existing = findExistingRequest(
+            serverRequest.id,
+            serverRequest.clientRequestId,
+            accountId,
+            serverRequest.isMine
+        )
+        val localId = existing?.localId ?: accountSnapshotLocalId(accountId, serverRequest.id)
+        val preserveLocalEdits = database.syncEventDao().hasUnresolvedForEntity(localId)
+        if (!preserveLocalEdits &&
+            existing?.updatedAt?.isNotBlank() == true &&
+            serverRequest.updatedAt < existing.updatedAt
+        ) return
+
+        val status = mapRequestStatus(serverRequest.status)
+        val bloodGroup = mapBloodGroup(serverRequest.requestedBloodGroup)
+        val urgency = serverRequest.urgency.takeIf { it == "CRITICAL" || it == "URGENT" }
+            ?: throw BackendProtocolException("The server returned an unsupported urgency.")
+        val facility = serverRequest.facilityName.ifBlank {
+            listOf(serverRequest.facilityLocation, serverRequest.facilityLocality, serverRequest.facilityState)
+                .filter(String::isNotBlank)
+                .distinct()
+                .joinToString(", ")
+                .ifBlank { "Health facility" }
+        }
+        val mine = serverRequest.isMine
+        val kind = when {
+            mine -> "OUTGOING"
+            existing?.kind == "INCOMING" -> "INCOMING"
+            status == "OPEN" || status == "PARTIALLY_FILLED" -> "INCOMING"
+            else -> "HIDDEN"
+        }
+        val current = existing
+        val update = (current ?: EmergencyRequestEntity(
+            localId = localId,
+            serverId = serverRequest.id,
+            kind = kind,
+            bloodGroup = bloodGroup,
+            urgency = urgency,
+            units = serverRequest.units,
+            facility = facility,
+            createdAt = serverRequest.createdAt,
+            updatedAt = serverRequest.updatedAt,
+            status = status,
+            receivedAt = displayTime(serverRequest.createdAt),
+            expiresIn = expiryText(serverRequest.expiresAt),
+            syncStatus = "SYNCED"
+        )).copy(
+            serverId = serverRequest.id,
+            kind = kind,
+            bloodGroup = if (preserveLocalEdits) current?.bloodGroup ?: bloodGroup else bloodGroup,
+            urgency = if (preserveLocalEdits) current?.urgency ?: urgency else urgency,
+            units = if (preserveLocalEdits) current?.units ?: serverRequest.units else serverRequest.units,
+            facility = facility,
+            facilityLocation = serverRequest.facilityLocation.ifBlank { serverRequest.facilityLocality },
+            facilityLatitude = serverRequest.facilityLatitude,
+            facilityLongitude = serverRequest.facilityLongitude,
+            facilityId = serverRequest.facilityId.ifBlank { current?.facilityId.orEmpty() }
+                .takeIf(String::isNotBlank),
+            isForSelf = if (!mine) true else if (preserveLocalEdits) {
+                current?.isForSelf ?: serverRequest.isForSelf ?: true
+            } else {
+                serverRequest.isForSelf ?: current?.isForSelf ?: true
+            },
+            beneficiaryName = if (!mine) null else if (preserveLocalEdits) {
+                current?.beneficiaryName ?: serverRequest.beneficiaryName
+            } else {
+                serverRequest.beneficiaryName
+            },
+            beneficiaryRelationship = if (!mine) null else if (preserveLocalEdits) {
+                current?.beneficiaryRelationship ?: serverRequest.beneficiaryRelationship
+            } else {
+                serverRequest.beneficiaryRelationship
+            },
+            additionalInfo = if (!mine) null else if (preserveLocalEdits) {
+                current?.additionalInfo ?: serverRequest.additionalInfo
+            } else {
+                serverRequest.additionalInfo
+            },
+            note = if (!mine) "" else if (preserveLocalEdits) {
+                current?.note ?: serverRequest.additionalInfo.orEmpty()
+            } else {
+                serverRequest.additionalInfo.orEmpty()
+            },
+            reviewReason = if (mine) serverRequest.reviewReason else null,
+            reviewedAt = if (mine) serverRequest.reviewedAt else null,
+            createdAt = current?.createdAt ?: serverRequest.createdAt,
+            updatedAt = if (preserveLocalEdits) current?.updatedAt ?: serverRequest.updatedAt
+                else serverRequest.updatedAt,
+            status = status,
+            receivedAt = current?.receivedAt?.takeIf(String::isNotBlank)
+                ?: displayTime(serverRequest.createdAt),
+            expiresIn = expiryText(serverRequest.expiresAt),
+            syncStatus = if (preserveLocalEdits) current?.syncStatus ?: "PENDING" else "SYNCED"
+        )
+        requests.upsert(update)
+        if (mine) requests.hideOtherIncomingForServerId(serverRequest.id, localId)
+    }
+
+    private suspend fun findExistingRequest(
+        serverId: String,
+        clientRequestId: String?,
+        accountId: String,
+        isMine: Boolean
+    ): EmergencyRequestEntity? {
+        val requests = database.emergencyRequestDao()
+        requests.get(accountSnapshotLocalId(accountId, serverId))?.let { return it }
+        requests.getByServerId(serverId)?.let { request ->
+            val belongsToOtherAccount = database.syncEventDao()
+                .hasEventOwnedByAnotherAccount(request.localId, accountId)
+            if (!belongsToOtherAccount && (request.kind != "OUTGOING" || isMine)) return request
+        }
+        if (clientRequestId.isNullOrBlank()) return null
+        val event = database.syncEventDao().get(clientRequestId)
+        if (event != null &&
+            (event.ownerAccountId == null || event.ownerAccountId == accountId)
+        ) {
+            event.localEntityId?.let { requests.get(it) }
+                ?.takeIf { it.kind != "OUTGOING" || isMine }
+                ?.let { return it }
+        }
+        val routeRequest = database.meshRequestRouteDao()
+            .byOriginEvent(clientRequestId)
+            ?.requestLocalId
+            ?.let { requests.get(it) }
+        if (routeRequest != null &&
+            (routeRequest.kind != "OUTGOING" || isMine) &&
+            !database.syncEventDao().hasEventOwnedByAnotherAccount(routeRequest.localId, accountId)
+        ) return routeRequest
+        return null
+    }
+
+    private fun accountSnapshotLocalId(accountId: String, serverId: String) =
+        "SYNC-$accountId-$serverId"
 
     private suspend fun refreshConflicts(serverDeviceId: String) {
         val conflicts = apiCall { api.getConflicts(it, serverDeviceId, CONFLICT_LIMIT) }
@@ -738,16 +913,7 @@ class SyncEngine(
         else -> throw IllegalArgumentException("Choose a valid blood group before syncing donor settings.")
     }
 
-    private fun mapRequestStatus(status: String): String = when (status) {
-        "OPEN", "PARTIALLY_FILLED", "FULFILLED", "CANCELLED", "EXPIRED",
-        "PENDING_FACILITY_VERIFICATION", "NEEDS_INFORMATION" -> "OPEN"
-        "REJECTED" -> status
-        "SEARCHING" -> "SEARCHING"
-        "WAITING" -> "WAITING"
-        "ACCEPTED", "LEGACY_ACCEPTED" -> "ACCEPTED"
-        "COMPLETED", "LEGACY_COMPLETED" -> "COMPLETED"
-        else -> throw BackendProtocolException("The server returned an unsupported request status.")
-    }
+    internal fun mapRequestStatus(status: String): String = mapServerRequestStatus(status)
 
     private fun mapBloodGroup(group: String): String = when (group) {
         "A_POSITIVE" -> "A+"
@@ -786,4 +952,21 @@ class SyncEngine(
         private const val CONFLICT_LIMIT = 100
         private const val MAX_PAGES_PER_RUN = 50
     }
+}
+
+internal fun mapServerRequestStatus(status: String): String = when (status) {
+    "OPEN" -> "OPEN"
+    "PARTIALLY_FILLED" -> "PARTIALLY_FILLED"
+    "FULFILLED" -> "FULFILLED"
+    "CANCELLED" -> "CANCELLED"
+    "EXPIRED" -> "EXPIRED"
+    // Keep legacy review states distinct without reviving the retired facility flow.
+    "PENDING_FACILITY_VERIFICATION" -> "PENDING"
+    "NEEDS_INFORMATION" -> "NEEDS_INFORMATION"
+    "REJECTED" -> "REJECTED"
+    "SEARCHING" -> "SEARCHING"
+    "WAITING" -> "WAITING"
+    "ACCEPTED", "LEGACY_ACCEPTED" -> "ACCEPTED"
+    "COMPLETED", "LEGACY_COMPLETED" -> "COMPLETED"
+    else -> throw BackendProtocolException("The server returned an unsupported request status.")
 }

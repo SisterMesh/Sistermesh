@@ -109,8 +109,17 @@ class GoogleNearbyTransport(context: Context) : NearbyTransport {
             var advertisingReady = false
             var discoveryReady = false
             var reported = false
-            advertising.addOnFailureListener { listener.onStartFailed("Advertising could not start: ${it.message.orEmpty()}") }
-            discovery.addOnFailureListener { listener.onStartFailed("Nearby discovery could not start: ${it.message.orEmpty()}") }
+            fun reportFailure(message: String) {
+                if (reported) return
+                reported = true
+                listener.onStartFailed(message)
+            }
+            advertising.addOnFailureListener {
+                reportFailure("Advertising could not start: ${it.message.orEmpty()}")
+            }
+            discovery.addOnFailureListener {
+                reportFailure("Nearby discovery could not start: ${it.message.orEmpty()}")
+            }
             advertising.addOnSuccessListener {
                 advertisingReady = true
                 if (discoveryReady && !reported) {

@@ -180,6 +180,51 @@ describe("Phase 2 authentication and access control", () => {
     expect(login.body.refreshToken).toBeUndefined();
   });
 
+  it("registers an individual account through the app's primary route and validates its inputs", async () => {
+    prismaMock.user.create.mockResolvedValue({
+      ...safeDonor,
+      donorProfile: null,
+    });
+    prismaMock.refreshToken.create.mockResolvedValue({});
+    const body = {
+      displayName: "Local requester",
+      phoneNumber: "+2348012345678",
+      password: "Correct horse battery 24",
+      role: "INDIVIDUAL",
+    };
+
+    await request(app.getHttpServer())
+      .post("/api/auth/register")
+      .send({ ...body, phoneNumber: "08012345678" })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post("/api/auth/register")
+      .send({ ...body, password: "short" })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post("/api/auth/register")
+      .send({ ...body, role: "ADMIN" })
+      .expect(400);
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+
+    const response = await request(app.getHttpServer())
+      .post("/api/auth/register")
+      .send(body)
+      .expect(201);
+
+    expect(prismaMock.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          role: UserRole.INDIVIDUAL,
+          phoneNumber: body.phoneNumber,
+        }),
+      }),
+    );
+    expect(response.body.user.role).toBe("INDIVIDUAL");
+    expect(response.body.user.passwordHash).toBeUndefined();
+    expect(response.headers["set-cookie"][0]).toContain("HttpOnly");
+  });
+
   it("derives user ownership from the verified token and rejects body-supplied identity", async () => {
     usersService.getMine.mockResolvedValue({
       id: safeDonor.id,

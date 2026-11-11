@@ -234,6 +234,13 @@ fun PermissionsScreen(onDone: () -> Unit) {
         refresh()
     }
     val all = missing.isEmpty()
+    val bluetoothPermissionNeeded = Build.VERSION.SDK_INT >= 31 &&
+        Manifest.permission.BLUETOOTH_CONNECT in missing
+    val bluetoothStatus = when {
+        bluetoothPermissionNeeded -> "Permission needed"
+        bluetoothEnabled.value -> "On"
+        else -> "Off"
+    }
     Page(footer = {
         SmButton(if (all) "Continue" else "Enable nearby access", {
             if (all) onDone() else {
@@ -279,9 +286,7 @@ fun PermissionsScreen(onDone: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         val rows = buildList {
-            add(
-                Perm("Bluetooth", Icons.Rounded.Bluetooth) to if (bluetoothEnabled.value) "On" else "Off"
-            )
+            add(Perm("Bluetooth", Icons.Rounded.Bluetooth) to bluetoothStatus)
             add(
                 Perm("Wi-Fi", Icons.Rounded.Wifi) to if (nearbyState.wifiEnabled) "On" else "Off"
             )
@@ -319,7 +324,7 @@ fun PermissionsScreen(onDone: () -> Unit) {
             }
             Spacer(Modifier.height(12.dp))
         }
-        if (!bluetoothEnabled.value) {
+        if (!bluetoothEnabled.value && !bluetoothPermissionNeeded) {
             TextButton(
                 onClick = { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                 modifier = Modifier.fillMaxWidth()

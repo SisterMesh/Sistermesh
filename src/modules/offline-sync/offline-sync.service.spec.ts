@@ -232,4 +232,29 @@ describe('OfflineSyncService', () => {
       data: { pendingCursor: highWater },
     });
   });
+
+  it('authorizes matching donors to receive public request status transitions', async () => {
+    const requestActivity = { findMany: jest.fn().mockResolvedValue([]) };
+    const donorProfile = {
+      findUnique: jest.fn().mockResolvedValue({ bloodGroup: 'O_NEGATIVE' }),
+    };
+    const { service, prisma } = makeService({ requestActivity, donorProfile });
+
+    await service.getChanges(user, deviceId);
+
+    const activityQuery = prisma.requestActivity.findMany.mock.calls[0][0];
+    const publicRequestFilter = activityQuery.where.request.OR.find(
+      (filter: { status?: { in?: string[] } }) => filter.status?.in,
+    );
+    expect(publicRequestFilter.status.in).toEqual(
+      expect.arrayContaining([
+        'OPEN',
+        'PARTIALLY_FILLED',
+        'ACCEPTED',
+        'FULFILLED',
+        'CANCELLED',
+        'EXPIRED',
+      ]),
+    );
+  });
 });

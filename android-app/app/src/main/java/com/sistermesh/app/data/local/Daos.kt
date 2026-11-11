@@ -58,8 +58,48 @@ interface EmergencyRequestDao {
     @Query("SELECT * FROM emergency_requests WHERE kind = 'OUTGOING' AND isDemo = 0 ORDER BY createdAt DESC")
     fun observeOutgoingWithResponses(): Flow<List<RequestWithResponses>>
 
+    @Transaction
+    @Query("""
+        SELECT request.* FROM emergency_requests AS request
+        WHERE request.kind = 'OUTGOING' AND request.isDemo = 0
+          AND (
+            (
+              request.localId NOT LIKE 'SYNC-%'
+              AND NOT EXISTS (
+                SELECT 1 FROM sync_events AS event
+                WHERE event.localEntityId = request.localId
+                  AND event.ownerAccountId IS NOT NULL
+                  AND (:accountId IS NULL OR event.ownerAccountId != :accountId)
+              )
+            )
+            OR (
+              :accountId IS NOT NULL
+              AND request.localId LIKE 'SYNC-%'
+              AND request.serverId IN (:ownedServerIds)
+            )
+          )
+        ORDER BY request.createdAt DESC
+    """)
+    fun observeOutgoingWithResponsesForAccount(
+        accountId: String?,
+        ownedServerIds: List<String>
+    ): Flow<List<RequestWithResponses>>
+
     @Query("SELECT * FROM emergency_requests WHERE kind = 'INCOMING' AND isDemo = 0 ORDER BY createdAt DESC")
     fun observeIncoming(): Flow<List<EmergencyRequestEntity>>
+
+    @Query("""
+        SELECT request.* FROM emergency_requests AS request
+        WHERE request.kind = 'INCOMING' AND request.isDemo = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM sync_events AS event
+            WHERE event.localEntityId = request.localId
+              AND event.ownerAccountId IS NOT NULL
+              AND (:accountId IS NULL OR event.ownerAccountId != :accountId)
+          )
+        ORDER BY request.createdAt DESC
+    """)
+    fun observeIncomingForAccount(accountId: String?): Flow<List<EmergencyRequestEntity>>
 
     @Transaction
     @Query("SELECT * FROM emergency_requests WHERE kind = 'FACILITY' AND isDemo = 0 ORDER BY createdAt DESC")
@@ -74,6 +114,9 @@ interface EmergencyRequestDao {
 
     @Query("SELECT * FROM emergency_requests WHERE serverId = :serverId LIMIT 1")
     suspend fun getByServerId(serverId: String): EmergencyRequestEntity?
+
+    @Query("UPDATE emergency_requests SET kind = 'HIDDEN' WHERE serverId = :serverId AND kind = 'INCOMING' AND localId != :keepLocalId")
+    suspend fun hideOtherIncomingForServerId(serverId: String, keepLocalId: String)
 
     @Upsert
     suspend fun upsert(request: EmergencyRequestEntity)
@@ -117,6 +160,19 @@ interface DonationConfirmationDao {
     @Query("SELECT * FROM donation_confirmations WHERE isDemo = 0 ORDER BY confirmedAt DESC")
     fun observeAll(): Flow<List<DonationConfirmationEntity>>
 
+    @Query("""
+        SELECT confirmation.* FROM donation_confirmations AS confirmation
+        WHERE confirmation.isDemo = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM sync_events AS event
+            WHERE event.localEntityId = confirmation.requestLocalId
+              AND event.ownerAccountId IS NOT NULL
+              AND (:accountId IS NULL OR event.ownerAccountId != :accountId)
+          )
+        ORDER BY confirmation.confirmedAt DESC
+    """)
+    fun observeForAccount(accountId: String?): Flow<List<DonationConfirmationEntity>>
+
     @Upsert
     suspend fun upsert(confirmation: DonationConfirmationEntity)
 
@@ -147,26 +203,44 @@ interface SyncEventDao {
     @Query("SELECT * FROM sync_events WHERE eventId = :eventId LIMIT 1")
     suspend fun get(eventId: String): SyncEventEntity?
 
-    @Query("SELECT * FROM sync_events WHERE status IN ('PENDING', 'RETRY') ORDER BY localCreatedAt, eventId")
-    fun observePending(): Flow<List<SyncEventEntity>>
+    @Query("""
+        SELECT * FROM sync_events
+        WHERE status IN ('PENDING', 'RETRY')
+          AND (ownerAccountId IS NULL OR ownerAccountId = :accountId)
+        ORDER BY localCreatedAt, eventId
+    """)
+    fun observePending(accountId: String?): Flow<List<SyncEventEntity>>
 
     @Query("SELECT * FROM sync_events WHERE status IN ('PENDING', 'RETRY', 'BLOCKED') ORDER BY localCreatedAt, eventId")
     suspend fun forSync(): List<SyncEventEntity>
 
-    @Query("SELECT COUNT(*) FROM sync_events WHERE status IN ('PENDING', 'RETRY')")
-    fun observePendingCount(): Flow<Int>
+    @Query("""
+        SELECT COUNT(*) FROM sync_events
+        WHERE status IN ('PENDING', 'RETRY')
+          AND (ownerAccountId IS NULL OR ownerAccountId = :accountId)
+    """)
+    fun observePendingCount(accountId: String?): Flow<Int>
 
     @Query("SELECT COUNT(*) FROM sync_events WHERE status IN ('PENDING', 'RETRY')")
     suspend fun pendingCountNow(): Int
 
-    @Query("SELECT COUNT(*) FROM sync_events WHERE status IN ('REJECTED', 'CONFLICT', 'BLOCKED')")
-    fun observeFailedCount(): Flow<Int>
+    @Query("""
+        SELECT COUNT(*) FROM sync_events
+        WHERE status IN ('REJECTED', 'CONFLICT', 'BLOCKED')
+          AND (ownerAccountId IS NULL OR ownerAccountId = :accountId)
+    """)
+    fun observeFailedCount(accountId: String?): Flow<Int>
 
     @Query("SELECT * FROM sync_events ORDER BY localCreatedAt, eventId")
     fun observeAll(): Flow<List<SyncEventEntity>>
 
-    @Query("SELECT * FROM sync_events WHERE status IN ('REJECTED', 'CONFLICT', 'BLOCKED') ORDER BY localCreatedAt DESC")
-    fun observeNeedsReview(): Flow<List<SyncEventEntity>>
+    @Query("""
+        SELECT * FROM sync_events
+        WHERE status IN ('REJECTED', 'CONFLICT', 'BLOCKED')
+          AND (ownerAccountId IS NULL OR ownerAccountId = :accountId)
+        ORDER BY localCreatedAt DESC
+    """)
+    fun observeNeedsReview(accountId: String?): Flow<List<SyncEventEntity>>
 
     @Query("SELECT * FROM sync_events WHERE localEntityId = :localEntityId ORDER BY localCreatedAt DESC LIMIT 1")
     suspend fun latestForEntity(localEntityId: String): SyncEventEntity?
@@ -182,6 +256,9 @@ interface SyncEventDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM sync_events WHERE localEntityId = :localEntityId AND status IN ('PENDING', 'RETRY', 'BLOCKED'))")
     suspend fun hasPendingForEntity(localEntityId: String): Boolean
+
+    @Query("SELECT EXISTS(SELECT 1 FROM sync_events WHERE localEntityId = :localEntityId AND ownerAccountId IS NOT NULL AND ownerAccountId != :accountId)")
+    suspend fun hasEventOwnedByAnotherAccount(localEntityId: String, accountId: String): Boolean
 
     @Query("UPDATE sync_events SET entityId = :entityId WHERE localEntityId = :localEntityId AND eventType != 'request.create' AND entityId IS NULL")
     suspend fun attachEntityId(localEntityId: String, entityId: String)
@@ -246,11 +323,20 @@ interface SyncConflictDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIfAbsent(conflict: SyncConflictEntity): Long
 
-    @Query("SELECT * FROM sync_conflicts ORDER BY occurredAt DESC, conflictId DESC")
-    fun observeAll(): Flow<List<SyncConflictEntity>>
+    @Query("""
+        SELECT sc.* FROM sync_conflicts AS sc
+        LEFT JOIN sync_events AS event ON event.eventId = sc.eventId
+        WHERE event.ownerAccountId IS NULL OR event.ownerAccountId = :accountId
+        ORDER BY sc.occurredAt DESC, sc.conflictId DESC
+    """)
+    fun observeAll(accountId: String?): Flow<List<SyncConflictEntity>>
 
-    @Query("SELECT COUNT(*) FROM sync_conflicts")
-    fun observeCount(): Flow<Int>
+    @Query("""
+        SELECT COUNT(*) FROM sync_conflicts AS sc
+        LEFT JOIN sync_events AS event ON event.eventId = sc.eventId
+        WHERE event.ownerAccountId IS NULL OR event.ownerAccountId = :accountId
+    """)
+    fun observeCount(accountId: String?): Flow<Int>
 
     @Query("SELECT * FROM sync_conflicts WHERE conflictId = :conflictId LIMIT 1")
     suspend fun get(conflictId: String): SyncConflictEntity?

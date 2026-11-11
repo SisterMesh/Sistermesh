@@ -20,12 +20,18 @@ import com.sistermesh.app.sync.ConnectivityStatus
 import com.sistermesh.app.sync.SyncEngine
 import com.sistermesh.app.sync.SyncWorkScheduler
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 
 /**
  * Compose-facing state holder. Room-backed repositories are the source of truth;
- * sample data and the explicitly labelled facility-confirmation action are demo-only.
+ * emergency records remain local while account-owned records are scoped to the signed-in user.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class AppViewModel(
     private val repository: SisterMeshRepository,
     private val nearbyManager: NearbyConnectionsManager,
@@ -57,6 +63,7 @@ class AppViewModel(
     var accountBusy by mutableStateOf(false); private set
     var accountError by mutableStateOf<String?>(null); private set
     var accountMessage by mutableStateOf<String?>(null)
+    var requestFeedError by mutableStateOf<String?>(null); private set
     var pendingVoiceRequestTranscript by mutableStateOf<String?>(null)
         private set
 
@@ -67,6 +74,8 @@ class AppViewModel(
     val pendingEvents = mutableStateListOf<SyncEventEntity>()
     val eventsForReview = mutableStateListOf<SyncEventEntity>()
     val conflicts = mutableStateListOf<SyncConflictEntity>()
+    private val ownedRequestServerIds = MutableStateFlow<List<String>>(emptyList())
+    private var activeFeedAccountId: String? = null
 
     init {
         viewModelScope.launch {
@@ -79,22 +88,67 @@ class AppViewModel(
             isReady = true
 
             launch { repository.observeProfile().collect { profile = it } }
-            launch { repository.observeRequests().collect { replace(requests, it) } }
-            launch { repository.observeIncoming().collect { replace(incoming, it) } }
-            launch { repository.observeReceipts().collect { replace(receipts, it) } }
-            launch { repository.observePendingEvents().collect { replace(pendingEvents, it) } }
-            launch { repository.observeEventsForReview().collect { replace(eventsForReview, it) } }
+            val signedInAccountId = authRepository.state
+                .map { (it as? AccountState.SignedIn)?.user?.id }
+                .distinctUntilChanged()
+            launch {
+                combine(signedInAccountId, ownedRequestServerIds) { accountId, ids -> accountId to ids }
+                    .flatMapLatest { (accountId, ids) -> repository.observeRequests(accountId, ids) }
+                    .collect { replace(requests, it) }
+            }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observeIncoming(it) }
+                    .collect { replace(incoming, it) }
+            }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observeReceipts(it) }
+                    .collect { replace(receipts, it) }
+            }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observePendingEvents(it) }
+                    .collect { replace(pendingEvents, it) }
+            }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observeEventsForReview(it) }
+                    .collect { replace(eventsForReview, it) }
+            }
             launch { repository.observeDeviceInfo().collect { deviceInfo = it; updateSyncScheduling() } }
             launch { repository.observeSyncState().collect { syncState = it } }
-            launch { repository.observePendingSyncCount().collect { pendingSyncCount = it } }
-            launch { repository.observeFailedSyncCount().collect { failedSyncCount = it } }
-            launch { repository.observeConflicts().collect { replace(conflicts, it) } }
-            launch { repository.observeConflictCount().collect { conflictCount = it } }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observePendingSyncCount(it) }
+                    .collect { pendingSyncCount = it }
+            }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observeFailedSyncCount(it) }
+                    .collect { failedSyncCount = it }
+            }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observeConflicts(it) }
+                    .collect { replace(conflicts, it) }
+            }
+            launch {
+                signedInAccountId.flatMapLatest { repository.observeConflictCount(it) }
+                    .collect { conflictCount = it }
+            }
             launch {
                 authRepository.state.collect { state ->
                     accountState = state
                     updateSyncScheduling()
-                    val user = (state as? AccountState.SignedIn)?.user ?: return@collect
+                    val user = (state as? AccountState.SignedIn)?.user
+                    if (user == null) {
+                        activeFeedAccountId = null
+                        ownedRequestServerIds.value = emptyList()
+                        requestFeedError = null
+                        return@collect
+                    }
+                    val changedAccount = activeFeedAccountId != user.id
+                    if (changedAccount) {
+                        activeFeedAccountId = user.id
+                        ownedRequestServerIds.value = emptyList()
+                        requestFeedError = null
+                        refreshRequestFeed()
+                    }
+                    if (deviceInfo?.accountUserId == user.id) syncWorkScheduler.syncNow()
                     val local = profile ?: return@collect
                     val updated = when {
                         local.role == Role.INDIVIDUAL &&
@@ -177,15 +231,19 @@ class AppViewModel(
         accountMessage = null
         viewModelScope.launch {
             try {
-                authRepository.registerIndividual(
+                if (localProfile.bloodGroup.isNotBlank()) {
+                    authRepository.registerDonor(
+                        displayName = localProfile.name,
+                        phoneNumber = phoneNumber.trim(),
+                        password = password,
+                        bloodGroup = localProfile.bloodGroup.toBackendBloodGroup(),
+                        locality = localProfile.area.trim()
+                    )
+                } else {
+                    authRepository.registerIndividual(
                         displayName = localProfile.name,
                         phoneNumber = phoneNumber.trim(),
                         password = password
-                )
-                if (localProfile.bloodGroup.isNotBlank()) {
-                    authRepository.createDonorProfile(
-                        bloodGroup = localProfile.bloodGroup.toBackendBloodGroup(),
-                        locality = localProfile.area
                     )
                 }
                 accountMessage = "Account created. Confirm the local profile link before syncing."
@@ -227,7 +285,7 @@ class AppViewModel(
         }
     }
 
-    fun disconnectAccount() = endSession {}
+    fun disconnectAccount() = logout {}
 
     fun logout(onDone: () -> Unit) = endSession(onDone)
 
@@ -238,7 +296,21 @@ class AppViewModel(
             try {
                 syncWorkScheduler.cancelAll()
                 authRepository.logout()
-                accountMessage = "Signed out. Local records remain on this phone."
+                repository.unlinkAccount()
+                deviceInfo = deviceInfo?.copy(accountUserId = null)
+                activeFeedAccountId = null
+                ownedRequestServerIds.value = emptyList()
+                requestFeedError = null
+                accountError = null
+                accountMessage = null
+                pendingVoiceRequestTranscript = null
+                messages.clear()
+                repository.clearProfile()
+                repository.resetSyncStatus()
+                profile = null
+                pendingUseMode = null
+                available = true
+                languageState.value = "English"
                 onDone()
             } catch (error: Exception) {
                 accountError = accountErrorMessage(error)
@@ -261,6 +333,23 @@ class AppViewModel(
     fun clearAccountFeedback() {
         accountError = null
         accountMessage = null
+    }
+
+    fun refreshRequestFeed() {
+        val user = (accountState as? AccountState.SignedIn)?.user ?: return
+        viewModelScope.launch {
+            try {
+                val ids = syncEngine.refreshRequestFeed(user)
+                if ((authRepository.state.value as? AccountState.SignedIn)?.user?.id == user.id) {
+                    ownedRequestServerIds.value = ids.toList()
+                    requestFeedError = null
+                }
+            } catch (error: Exception) {
+                if ((authRepository.state.value as? AccountState.SignedIn)?.user?.id == user.id) {
+                    requestFeedError = accountErrorMessage(error)
+                }
+            }
+        }
     }
 
     val isAccountLinked: Boolean
@@ -359,6 +448,12 @@ class AppViewModel(
                             locality = area.trim(),
                             isAvailable = available
                         )
+                    }
+                    val refreshedUser = authRepository.currentUser()
+                    val visibleOwnedIds = syncEngine.refreshRequestFeed(refreshedUser)
+                    if ((accountState as? AccountState.SignedIn)?.user?.id == refreshedUser.id) {
+                        ownedRequestServerIds.value = visibleOwnedIds.toList()
+                        requestFeedError = null
                     }
                 }.onFailure { accountError = accountErrorMessage(it as? Exception ?: Exception(it)) }
             }

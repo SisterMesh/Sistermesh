@@ -155,7 +155,9 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('An active donor profile is required.');
     }
     const donorBloodGroup = donor.donorProfile.bloodGroup;
-    if (!donor.donorProfile.isAvailable || !donorBloodGroup) return [];
+    // Feed visibility is separate from the donor's willingness to respond.
+    // The response endpoint still enforces availability before accepting a response.
+    if (!donorBloodGroup) return [];
 
     const now = new Date();
     const requests = await this.prisma.emergencyRequest.findMany({
@@ -170,12 +172,14 @@ export class EmergencyRequestsService implements OnModuleInit, OnModuleDestroy {
       },
       select: {
         id: true,
+        clientRequestId: true,
         requestedBloodGroup: true,
         urgency: true,
         units: true,
         status: true,
         expiresAt: true,
         createdAt: true,
+        updatedAt: true,
         facilityId: true,
         facilityName: true,
         facilityLocation: true,

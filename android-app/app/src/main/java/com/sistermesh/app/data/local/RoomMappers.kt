@@ -97,7 +97,8 @@ private fun String.toDisplayTimestamp(): String = runCatching {
 }.getOrElse { this }
 
 private fun String.toRequestStatus(): RequestStatus = when (this) {
-    "PENDING_FACILITY_VERIFICATION", "NEEDS_INFORMATION" -> RequestStatus.OPEN
+    "PENDING_FACILITY_VERIFICATION" -> RequestStatus.PENDING
+    "NEEDS_INFORMATION" -> RequestStatus.NEEDS_INFORMATION
     "REJECTED" -> RequestStatus.REJECTED
     "OPEN" -> RequestStatus.OPEN
     "PARTIALLY_FILLED" -> RequestStatus.PARTIALLY_FILLED

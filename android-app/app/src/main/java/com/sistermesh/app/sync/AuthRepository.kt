@@ -101,6 +101,12 @@ class AuthRepository(
     suspend fun getMyDonations(): List<BackendDonorResponse> =
         withAccessToken { api.getMyDonations(it) }
 
+    suspend fun getEligibleRequests(): List<ServerRequestSnapshot> =
+        withAccessToken { api.getEligibleRequests(it) }
+
+    suspend fun getMyRequests(): List<ServerRequestSnapshot> =
+        withAccessToken { api.getMyRequests(it) }
+
     suspend fun currentUser(): BackendUser = withAccessToken { token ->
         api.getMe(token).also { user ->
             setAccountState(user)

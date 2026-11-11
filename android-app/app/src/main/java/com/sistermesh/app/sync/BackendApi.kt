@@ -85,7 +85,8 @@ data class ServerRequestSnapshot(
     val beneficiaryRelationship: String? = null,
     val additionalInfo: String? = null,
     val reviewReason: String? = null,
-    val reviewedAt: String? = null
+    val reviewedAt: String? = null,
+    val clientRequestId: String? = null
 )
 
 data class ServerChange(
@@ -149,6 +150,8 @@ interface SyncBackendApi {
         isAvailable: Boolean?
     ): BackendDonorProfile
     suspend fun getMyDonations(accessToken: String): List<BackendDonorResponse>
+    suspend fun getEligibleRequests(accessToken: String): List<ServerRequestSnapshot>
+    suspend fun getMyRequests(accessToken: String): List<ServerRequestSnapshot>
     suspend fun registerDevice(accessToken: String, clientDeviceId: String, deviceName: String): RegisteredDevice
     suspend fun uploadBatch(
         accessToken: String,
@@ -264,6 +267,22 @@ class BackendApi(
                 createdAt = item.requiredString("createdAt"),
                 request = parseRequestSnapshot(request)
             )
+        }
+    }
+
+    override suspend fun getEligibleRequests(accessToken: String): List<ServerRequestSnapshot> =
+        requestSnapshots("emergency-requests/eligible", accessToken).map { it.copy(isMine = false) }
+
+    override suspend fun getMyRequests(accessToken: String): List<ServerRequestSnapshot> =
+        requestSnapshots("emergency-requests/mine", accessToken).map { it.copy(isMine = true) }
+
+    private suspend fun requestSnapshots(path: String, accessToken: String): List<ServerRequestSnapshot> {
+        val rows = execute("GET", path, token = accessToken).array
+            ?: throw BackendProtocolException("The server response omitted the request list.")
+        return (0 until rows.length()).map { index ->
+            val request = rows.optJSONObject(index)
+                ?: throw BackendProtocolException("The server returned an invalid request.")
+            parseRequestSnapshot(request)
         }
     }
 
@@ -481,7 +500,8 @@ class BackendApi(
             beneficiaryRelationship = request.optNullableString("beneficiaryRelationship"),
             additionalInfo = request.optNullableString("additionalInfo"),
             reviewReason = request.optNullableString("reviewReason"),
-            reviewedAt = request.optNullableString("reviewedAt")
+            reviewedAt = request.optNullableString("reviewedAt"),
+            clientRequestId = request.optNullableString("clientRequestId")
         )
     }
 

@@ -31,6 +31,37 @@ class SisterMeshRepositoryTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
     @Test
+    fun logoutClearsProfileButKeepsAndHidesThePreviousAccountsLocalRequests() = runBlocking {
+        val database = inMemoryDatabase()
+        try {
+            val repository = SisterMeshRepository(database)
+            repository.initialize()
+            repository.registerProfile(Profile(role = Role.INDIVIDUAL, name = "Account A"))
+            val request = repository.createRequest(
+                "O-", Urgency.URGENT, 1, "Community Clinic", "Central", null, null,
+                true, null, null, null, ownerAccountId = "account-a"
+            )
+
+            repository.unlinkAccount()
+            repository.clearProfile()
+
+            assertNull(repository.getProfile())
+            assertEquals(1, database.emergencyRequestDao().count())
+            assertTrue(repository.observeRequests().first().isEmpty())
+            assertTrue(repository.observeRequests("account-b").first().isEmpty())
+            assertEquals(request.id, repository.observeRequests("account-a").first().single().id)
+            assertTrue(repository.observePendingEvents().first().isEmpty())
+            assertTrue(repository.observePendingEvents("account-b").first().isEmpty())
+            assertEquals(
+                request.id,
+                repository.observePendingEvents("account-a").first().single().localEntityId
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun offlineRequestAndVersionOneEventAreSavedTogether() = runBlocking {
         val database = inMemoryDatabase()
         try {

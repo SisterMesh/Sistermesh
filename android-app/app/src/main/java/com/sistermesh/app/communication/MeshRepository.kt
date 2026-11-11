@@ -78,6 +78,10 @@ class MeshRepository(
     suspend fun ensureOutgoing(event: SyncEventEntity) {
         val localId = localDeviceId()
         if (event.originDeviceId != localId || !MeshEventValidator.isSupported(event.eventType)) return
+        if (
+            event.ownerAccountId != null &&
+            event.ownerAccountId != database.deviceInfoDao().get()?.accountUserId
+        ) return
         if (messages.get(event.eventId) != null) return
         if (event.localEntityId.isNullOrBlank()) return
 
@@ -151,6 +155,15 @@ class MeshRepository(
     suspend fun prepareEventForPeer(messageId: String, peerDeviceId: String): ByteArray? {
         val localId = localDeviceId()
         val row = messages.get(messageId) ?: return null
+        val currentOriginEvent = if (row.originDeviceId == localId) {
+            database.syncEventDao().get(messageId)
+        } else {
+            null
+        }
+        if (
+            currentOriginEvent?.ownerAccountId != null &&
+            currentOriginEvent.ownerAccountId != database.deviceInfoDao().get()?.accountUserId
+        ) return null
         if (row.eventType == "request.create" && !isApprovedMeshRequest(row, localId)) return null
         val now = Instant.now()
         val relayDecision = RelayPolicy.decide(row.toPacket(), localId, peerDeviceId, seen = false, now = now)
@@ -171,7 +184,19 @@ class MeshRepository(
             (originTrust == null || originTrust.publicKeyBase64 != row.originPublicKey)
         ) return null
 
-        val packet = row.toPacket().copy(
+        val basePacket = row.toPacket().let { stored ->
+            val updatedEntityId = currentOriginEvent?.serverEntityId ?: stored.entityId
+            if (updatedEntityId == stored.entityId) stored else stored.copy(
+                entityId = updatedEntityId,
+                originSignature = ""
+            )
+        }
+        val authenticatedOriginPacket = if (row.originDeviceId == localId && basePacket.originSignature.isBlank()) {
+            basePacket.copy(originSignature = signer.sign(MeshCanonical.event(basePacket)))
+        } else {
+            basePacket
+        }
+        val packet = authenticatedOriginPacket.copy(
             hopCount = row.hopCount + 1,
             previousHopDeviceId = localId,
             relayAttestorDeviceId = if (row.originDeviceId == localId) null else localId,
@@ -196,6 +221,19 @@ class MeshRepository(
         }
         val request = database.emergencyRequestDao().get(localRequestId) ?: return false
         return request.status in setOf(RequestStatus.OPEN.name, RequestStatus.PARTIALLY_FILLED.name)
+    }
+
+    private suspend fun canReuseMeshRequest(
+        request: EmergencyRequestEntity,
+        packet: MeshEventPacket
+    ): Boolean {
+        if (request.kind != "OUTGOING") return true
+        val accountId = database.deviceInfoDao().get()?.accountUserId ?: return false
+        if (packet.entityId != null && request.localId == "SYNC-$accountId-${packet.entityId}") {
+            return true
+        }
+        val localEvent = database.syncEventDao().get(packet.messageId)
+        return localEvent?.ownerAccountId == accountId && localEvent.localEntityId == request.localId
     }
 
     suspend fun recordEventTransmitted(messageId: String, peerDeviceId: String) {
@@ -517,31 +555,61 @@ class MeshRepository(
         when (packet.eventType) {
             "request.create" -> {
                 val originRequestId = requireNotNull(packet.localEntityId)
-                val localRequestId = remoteRequestId(packet.originDeviceId, originRequestId)
-                requestDao.upsert(
-                    EmergencyRequestEntity(
-                        localId = localRequestId,
-                        kind = "INCOMING",
-                        bloodGroup = localBloodGroup(payload.getString("requestedBloodGroup")),
-                        urgency = payload.getString("urgency"),
-                        units = payload.getInt("units"),
-                        facility = packet.displayFacility ?: "Nearby health facility",
-                        facilityLocation = payload.optString("facilityLocation"),
-                        facilityLatitude = payload.optNullableDouble("facilityLatitude"),
-                        facilityLongitude = payload.optNullableDouble("facilityLongitude"),
-                        createdAt = packet.originCreatedAt,
-                        updatedAt = packet.originCreatedAt,
-                        status = if (payload.optString("publicationStatus") in setOf(
-                                RequestStatus.OPEN.name,
-                                RequestStatus.PARTIALLY_FILLED.name
-                            )
-                        ) payload.optString("publicationStatus") else RequestStatus.OPEN.name,
-                        receivedAt = "Just now",
-                        expiresIn = "Expires in 30 min",
-                        decision = Decision.NONE.name,
-                        syncStatus = "RELAYED"
-                    )
+                val existingRoute = routes.byOriginEvent(packet.messageId)
+                val serverRequest = packet.entityId?.let { requestDao.getByServerId(it) }
+                val existingByServerId = serverRequest?.takeIf { canReuseMeshRequest(it, packet) }
+                val routedRequest = existingRoute?.requestLocalId?.let { requestDao.get(it) }
+                    ?.takeIf { canReuseMeshRequest(it, packet) }
+                val localRequestId = existingByServerId?.localId
+                    ?: routedRequest?.localId
+                    ?: remoteRequestId(packet.originDeviceId, originRequestId)
+                if (existingRoute != null && existingRoute.requestLocalId != localRequestId) {
+                    routes.deleteByOriginRequest(packet.originDeviceId, originRequestId)
+                }
+                val existing = requestDao.get(localRequestId)
+                val isOwnRequest = existing?.kind == "OUTGOING"
+                val publicationStatus = payload.optString("publicationStatus")
+                    .takeIf { it in setOf(RequestStatus.OPEN.name, RequestStatus.PARTIALLY_FILLED.name) }
+                    ?: RequestStatus.OPEN.name
+                val received = (existing ?: EmergencyRequestEntity(
+                    localId = localRequestId,
+                    kind = "INCOMING",
+                    bloodGroup = localBloodGroup(payload.getString("requestedBloodGroup")),
+                    urgency = payload.getString("urgency"),
+                    units = payload.getInt("units"),
+                    facility = packet.displayFacility ?: "Nearby health facility",
+                    createdAt = packet.originCreatedAt,
+                    updatedAt = packet.originCreatedAt,
+                    status = publicationStatus,
+                    receivedAt = "Just now",
+                    expiresIn = "Expires in 30 min",
+                    decision = Decision.NONE.name,
+                    syncStatus = "RELAYED"
+                )).copy(
+                    serverId = packet.entityId ?: existing?.serverId,
+                    kind = if (isOwnRequest) "OUTGOING" else "INCOMING",
+                    bloodGroup = localBloodGroup(payload.getString("requestedBloodGroup")),
+                    urgency = payload.getString("urgency"),
+                    units = payload.getInt("units"),
+                    facility = packet.displayFacility ?: existing?.facility ?: "Nearby health facility",
+                    facilityLocation = payload.optString("facilityLocation")
+                        .ifBlank { existing?.facilityLocation.orEmpty() },
+                    facilityLatitude = payload.optNullableDouble("facilityLatitude") ?: existing?.facilityLatitude,
+                    facilityLongitude = payload.optNullableDouble("facilityLongitude") ?: existing?.facilityLongitude,
+                    createdAt = existing?.createdAt ?: packet.originCreatedAt,
+                    updatedAt = existing?.updatedAt ?: packet.originCreatedAt,
+                    status = existing?.status ?: publicationStatus,
+                    receivedAt = existing?.receivedAt?.takeIf(String::isNotBlank) ?: "Just now",
+                    expiresIn = existing?.expiresIn?.takeIf(String::isNotBlank) ?: "Expires in 30 min",
+                    decision = existing?.decision ?: Decision.NONE.name,
+                    confirmed = existing?.confirmed ?: false,
+                    beneficiaryName = if (isOwnRequest) existing?.beneficiaryName else null,
+                    beneficiaryRelationship = if (isOwnRequest) existing?.beneficiaryRelationship else null,
+                    additionalInfo = if (isOwnRequest) existing?.additionalInfo else null,
+                    note = if (isOwnRequest) existing?.note.orEmpty() else "",
+                    syncStatus = existing?.syncStatus ?: "RELAYED"
                 )
+                requestDao.upsert(received)
                 routes.upsert(
                     MeshRequestRouteEntity(
                         requestLocalId = localRequestId,

@@ -167,8 +167,10 @@ private fun IncomingCard(r: IncomingRequest, onOpen: () -> Unit) {
 @Composable
 fun IncomingRequestScreen(vm: AppViewModel, nav: NavController, id: String) {
     val r = vm.incomingById(id)
+    val requestIsOpen = r?.status == RequestStatus.OPEN || r?.status == RequestStatus.PARTIALLY_FILLED
+    val canRespond = !vm.profile?.bloodGroup.isNullOrBlank() && vm.available
     Page(footer = {
-        if (r != null && r.decision == Decision.NONE) {
+        if (r != null && requestIsOpen && r.decision == Decision.NONE && canRespond) {
             SmButton("I can help", {
                 vm.respond(id, true) {
                     vm.clearMessages()
@@ -178,11 +180,15 @@ fun IncomingRequestScreen(vm: AppViewModel, nav: NavController, id: String) {
             SmButton("Not available", {
                 vm.respond(id, false) { nav.popBackStack() }
             }, style = BtnStyle.Outline)
+        } else if (r != null && requestIsOpen && r.decision == Decision.NONE) {
+            SmButton("Set up donor availability", { nav.navigate("donate") }, style = BtnStyle.Outline)
         } else SmButton("Back to home", { nav.popBackStack() }, style = BtnStyle.Outline)
     }) {
         BackHeader("Request", { nav.popBackStack() })
         if (r == null) { Text("This request is no longer available."); return@Page }
         Spacer(Modifier.height(16.dp))
+        Tag(r.status.label, r.status.tone(), r.status.icon())
+        Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             BloodBadge(r.bloodGroup, 72.dp)
             Spacer(Modifier.width(16.dp))

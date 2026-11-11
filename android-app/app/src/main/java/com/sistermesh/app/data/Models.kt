@@ -18,6 +18,8 @@ enum class ResponseStatus(val label: String) {
 
 enum class RequestStatus(val label: String) {
     REJECTED("Closed"),
+    PENDING("Pending"),
+    NEEDS_INFORMATION("Needs information"),
     OPEN("Open to donors"),
     PARTIALLY_FILLED("Partially filled"),
     FULFILLED("Fulfilled"),

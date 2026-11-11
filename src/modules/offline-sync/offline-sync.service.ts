@@ -295,6 +295,7 @@ export class OfflineSyncService {
         request: {
           select: {
             id: true,
+            clientRequestId: true,
             createdByUserId: true,
             requestedBloodGroup: true,
             urgency: true,
@@ -348,6 +349,7 @@ export class OfflineSyncService {
           occurredAt: activity.occurredAt,
           request: {
             id: request.id,
+            clientRequestId: request.clientRequestId,
             isMine,
             requestedBloodGroup: request.requestedBloodGroup,
             urgency: request.urgency,
@@ -885,7 +887,19 @@ export class OfflineSyncService {
               .filter(([, donorGroups]) => donorGroups.includes(donor.bloodGroup!))
               .map(([recipient]) => recipient as BloodGroup),
           },
-          status: { in: ['OPEN', 'PARTIALLY_FILLED'] },
+          status: {
+            in: [
+              'OPEN',
+              'PARTIALLY_FILLED',
+              'ACCEPTED',
+              'FULFILLED',
+              'CANCELLED',
+              'EXPIRED',
+              'SEARCHING',
+              'WAITING',
+              'COMPLETED',
+            ],
+          },
         }]
       : [];
     return {

@@ -8,7 +8,9 @@ import com.sistermesh.app.data.RequestStatus
 import com.sistermesh.app.data.Role
 import com.sistermesh.app.data.SisterMeshRepository
 import com.sistermesh.app.data.Urgency
+import com.sistermesh.app.data.local.EmergencyRequestEntity
 import com.sistermesh.app.data.local.SisterMeshDatabase
+import com.sistermesh.app.data.local.SyncEventEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -31,6 +33,7 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 class MeshRepositoryTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
+    private val serverRequestId = "00000000-0000-4000-8000-000000000091"
 
     @Test
     fun queuedMessageSurvivesDatabaseReopenWhileOffline() = runBlocking {
@@ -119,6 +122,181 @@ class MeshRepositoryTest {
         } finally {
             sourceDb.close()
             relayDb.close()
+        }
+    }
+
+    @Test
+    fun nearbyRequestWithServerIdMergesIntoTheBackendFeedRow() = runBlocking {
+        val sourceDb = inMemoryDatabase()
+        val receiverDb = inMemoryDatabase()
+        try {
+            val sourceApp = configuredRequester(sourceDb)
+            sourceApp.createRequest(
+                "O-", Urgency.URGENT, 1, "Community Clinic", "Riverside", null, null,
+                false, "Private patient", null, "private note"
+            )
+            val event = sourceApp.observeAllEvents().first().single { it.eventType == "request.create" }
+            sourceDb.syncEventDao().recordResult(
+                eventId = event.eventId,
+                status = "PROCESSED",
+                attemptCount = 1,
+                lastAttemptedAt = null,
+                serverStatus = "PROCESSED",
+                serverEntityId = serverRequestId,
+                errorCode = null,
+                explanation = null
+            )
+            SisterMeshRepository(receiverDb).initialize()
+            receiverDb.emergencyRequestDao().upsert(
+                EmergencyRequestEntity(
+                    localId = "SYNC-$serverRequestId",
+                    serverId = serverRequestId,
+                    kind = "INCOMING",
+                    bloodGroup = "O-",
+                    urgency = "URGENT",
+                    units = 1,
+                    facility = "Community Clinic",
+                    createdAt = "2026-11-07T12:00:00Z",
+                    status = "OPEN",
+                    syncStatus = "SYNCED"
+                )
+            )
+            val sourceSigner = TestMeshSigner()
+            val receiverSigner = TestMeshSigner()
+            val sourceMesh = MeshRepository(sourceDb, sourceSigner)
+            val receiverMesh = MeshRepository(receiverDb, receiverSigner)
+            val sourceId = sourceMesh.localDeviceId()
+            val receiverId = receiverMesh.localDeviceId()
+            sourceMesh.ensureOutgoing(event)
+            receiverMesh.pinDirectPeer(sourceSigner.identity(sourceId))
+
+            val bytes = sourceMesh.prepareEventForPeer(event.eventId, receiverId)
+            assertNotNull(bytes)
+            val packet = (MeshCodec.decode(bytes!!) as MeshWirePacket.Event).event
+
+            assertEquals(serverRequestId, packet.entityId)
+            assertTrue(receiverMesh.receiveEvent(packet, sourceId).stored)
+
+            assertEquals(1, receiverDb.emergencyRequestDao().count())
+            assertEquals(
+                "SYNC-$serverRequestId",
+                receiverDb.emergencyRequestDao().getByServerId(serverRequestId)?.localId
+            )
+        } finally {
+            sourceDb.close()
+            receiverDb.close()
+        }
+    }
+
+    @Test
+    fun accountOwnedMeshEventsCannotBeSentAfterLogoutOrAccountSwitch() = runBlocking {
+        val database = inMemoryDatabase()
+        try {
+            val appRepository = configuredRequester(database)
+            appRepository.createRequest(
+                "O-", Urgency.URGENT, 1, "Community Clinic", "Riverside", null, null,
+                false, "Patient name", null, "private note"
+            )
+            val device = requireNotNull(database.deviceInfoDao().get())
+            database.deviceInfoDao().linkAccount("account-A")
+            database.syncEventDao().bindUnownedLocalEvents("account-A", device.clientDeviceId.toString())
+            val event = database.syncEventDao().get(
+                appRepository.observeAllEvents().first().single { it.eventType == "request.create" }.eventId
+            )!!
+            val mesh = MeshRepository(database, TestMeshSigner())
+            val peerId = UUID.randomUUID().toString()
+            assertTrue(mesh.pinDirectPeer(TestMeshSigner().identity(peerId)))
+            mesh.ensureOutgoing(event)
+            assertNotNull(database.meshMessageDao().get(event.eventId))
+
+            database.deviceInfoDao().linkAccount(null)
+            assertNull(mesh.prepareEventForPeer(event.eventId, peerId))
+            database.deviceInfoDao().linkAccount("account-B")
+            assertNull(mesh.prepareEventForPeer(event.eventId, peerId))
+            database.deviceInfoDao().linkAccount("account-A")
+            assertNotNull(mesh.prepareEventForPeer(event.eventId, peerId))
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun nearbyPublicRequestDoesNotReplaceAnotherAccountsPrivateRow() = runBlocking {
+        val sourceDb = inMemoryDatabase()
+        val receiverDb = inMemoryDatabase()
+        try {
+            val sourceApp = configuredRequester(sourceDb)
+            sourceApp.createRequest(
+                "O-", Urgency.URGENT, 1, "Community Clinic", "Riverside", null, null,
+                false, "Source beneficiary", null, "private note"
+            )
+            val sourceEvent = sourceApp.observeAllEvents().first().single { it.eventType == "request.create" }
+            sourceDb.syncEventDao().recordResult(
+                eventId = sourceEvent.eventId,
+                status = "PROCESSED",
+                attemptCount = 1,
+                lastAttemptedAt = null,
+                serverStatus = "PROCESSED",
+                serverEntityId = serverRequestId,
+                errorCode = null,
+                explanation = null
+            )
+            SisterMeshRepository(receiverDb).initialize()
+            val receiverDevice = requireNotNull(receiverDb.deviceInfoDao().get())
+            receiverDb.deviceInfoDao().linkAccount("account-B")
+            val privateLocalId = "REQ-account-A"
+            receiverDb.emergencyRequestDao().upsert(
+                EmergencyRequestEntity(
+                    localId = privateLocalId,
+                    serverId = serverRequestId,
+                    kind = "OUTGOING",
+                    bloodGroup = "O-",
+                    urgency = "URGENT",
+                    units = 1,
+                    facility = "Community Clinic",
+                    beneficiaryName = "Previous account beneficiary",
+                    createdAt = "2026-11-07T12:00:00Z",
+                    status = "OPEN"
+                )
+            )
+            receiverDb.syncEventDao().insertIfAbsent(
+                SyncEventEntity(
+                    eventId = sourceEvent.eventId,
+                    eventType = "request.create",
+                    localEntityId = privateLocalId,
+                    entityId = null,
+                    originDeviceId = receiverDevice.clientDeviceId.toString(),
+                    localCreatedAt = "2026-11-07T12:00:00Z",
+                    payloadJson = "{}",
+                    status = "PROCESSED",
+                    ownerAccountId = "account-A"
+                )
+            )
+            val sourceSigner = TestMeshSigner()
+            val receiverSigner = TestMeshSigner()
+            val sourceMesh = MeshRepository(sourceDb, sourceSigner)
+            val receiverMesh = MeshRepository(receiverDb, receiverSigner)
+            val sourceId = sourceMesh.localDeviceId()
+            val receiverId = receiverMesh.localDeviceId()
+            sourceMesh.ensureOutgoing(sourceEvent)
+            receiverMesh.pinDirectPeer(sourceSigner.identity(sourceId))
+
+            val bytes = sourceMesh.prepareEventForPeer(sourceEvent.eventId, receiverId)
+            assertNotNull(bytes)
+            val packet = (MeshCodec.decode(bytes!!) as MeshWirePacket.Event).event
+            assertTrue(receiverMesh.receiveEvent(packet, sourceId).stored)
+
+            assertEquals(
+                "Previous account beneficiary",
+                receiverDb.emergencyRequestDao().get(privateLocalId)?.beneficiaryName
+            )
+            val publicIncoming = receiverDb.emergencyRequestDao().observeIncoming().first()
+                .single { it.serverId == serverRequestId }
+            assertNull(publicIncoming.beneficiaryName)
+            assertTrue(publicIncoming.localId.startsWith("MESH-"))
+        } finally {
+            sourceDb.close()
+            receiverDb.close()
         }
     }
 

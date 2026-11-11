@@ -109,6 +109,56 @@ describe("EmergencyRequestsService", () => {
     );
   });
 
+  it("keeps matching requests visible when the donor switches away from the Donate side", async () => {
+    const matchingRequest = {
+      id: "00000000-0000-4000-8000-000000000007",
+      requestedBloodGroup: BloodGroup.O_NEGATIVE,
+      urgency: RequestUrgency.URGENT,
+      units: 1,
+      status: EmergencyRequestStatus.OPEN,
+      expiresAt: null,
+      createdAt: new Date("2026-11-07T12:00:00.000Z"),
+      facilityId: null,
+      facilityName: "Community Clinic",
+      facilityLocation: "Central",
+      facilityLatitude: null,
+      facilityLongitude: null,
+      facility: null,
+    };
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          status: "ACTIVE",
+          role: UserRole.INDIVIDUAL,
+          donorProfile: {
+            bloodGroup: BloodGroup.O_NEGATIVE,
+            isAvailable: false,
+          },
+        }),
+      },
+      emergencyRequest: {
+        findMany: jest.fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([matchingRequest]),
+      },
+      $transaction: jest.fn(),
+    } as unknown as PrismaService;
+    const service = new EmergencyRequestsService(prisma);
+
+    await expect(service.listEligible(user)).resolves.toEqual([
+      {
+        ...matchingRequest,
+        facility: {
+          id: "",
+          name: "Community Clinic",
+          locality: "Central",
+          state: "",
+        },
+      },
+    ]);
+    expect(prisma.emergencyRequest.findMany).toHaveBeenCalledTimes(2);
+  });
+
   it("stores the request destination and keeps beneficiary details private", async () => {
     const requester: AuthenticatedUser = {
       id: "00000000-0000-4000-8000-000000000007",

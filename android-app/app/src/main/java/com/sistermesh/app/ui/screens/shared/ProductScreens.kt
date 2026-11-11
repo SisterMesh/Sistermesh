@@ -88,6 +88,13 @@ fun UnifiedHomeScreen(vm: AppViewModel, nav: NavController) {
             Spacer(Modifier.height(10.dp))
             Notice("Offline mode is on. Requests are saved on this phone and shared with nearby donors.")
         }
+        vm.requestFeedError?.let { error ->
+            Spacer(Modifier.height(8.dp))
+            Notice("Request refresh failed: $error")
+            TextButton(onClick = vm::refreshRequestFeed, modifier = Modifier.fillMaxWidth()) {
+                Text("Retry request refresh")
+            }
+        }
         if (!donorMode) {
             SectionTitle("Need blood?")
             SmCard {
@@ -184,27 +191,43 @@ fun FindBloodScreen(vm: AppViewModel, nav: NavController) {
             Notice("Add your blood group and consent on the Donate tab to respond.")
             Spacer(Modifier.height(10.dp))
             SmButton("Set up donor profile", { nav.navigate("donate") })
+        }
+        SectionTitle("${requests.size} open requests")
+        if (requests.isEmpty()) {
+            SmCard {
+                Text("No matching requests yet.", style = MaterialTheme.typography.titleMedium)
+            }
         } else {
-            SectionTitle("${requests.size} open requests")
-            if (requests.isEmpty()) {
-                SmCard {
-                    Text("No matching requests yet.", style = MaterialTheme.typography.titleMedium)
-                }
-            } else {
-                requests.forEach { request ->
-                    SmCard(onClick = { nav.navigate("incoming/${request.id}") }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(request.bloodGroup, style = MaterialTheme.typography.headlineSmall, color = Teal)
-                            Spacer(Modifier.weight(1f))
-                            Tag(request.status.label, request.status.tone(), request.status.icon())
-                        }
-                        Text("${request.urgency.name.lowercase().replaceFirstChar(Char::uppercase)} · ${request.units} unit${if (request.units == 1) "" else "s"}", color = Muted)
-                        Spacer(Modifier.height(4.dp))
-                        Text(request.facility, style = MaterialTheme.typography.bodyMedium)
-                        if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
+            requests.forEach { request ->
+                SmCard(onClick = { nav.navigate("incoming/${request.id}") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(request.bloodGroup, style = MaterialTheme.typography.headlineSmall, color = Teal)
+                        Spacer(Modifier.weight(1f))
+                        Tag(request.status.label, request.status.tone(), request.status.icon())
                     }
-                    Spacer(Modifier.height(10.dp))
+                    Text("${request.urgency.name.lowercase().replaceFirstChar(Char::uppercase)} · ${request.units} unit${if (request.units == 1) "" else "s"}", color = Muted)
+                    Spacer(Modifier.height(4.dp))
+                    Text(request.facility, style = MaterialTheme.typography.bodyMedium)
+                    if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
                 }
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+        SectionTitle("Your requests", action = "View all", onAction = { nav.navigate("activity") })
+        if (vm.requests.isEmpty()) {
+            SmCard { Text("Requests you create will stay available here.", color = Muted) }
+        } else {
+            vm.requests.take(3).forEach { request ->
+                SmCard(onClick = { nav.navigate("activity") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(request.bloodGroup, style = MaterialTheme.typography.titleLarge, color = Teal)
+                        Spacer(Modifier.weight(1f))
+                        Tag(request.status.label, request.status.tone(), request.status.icon())
+                    }
+                    Text(request.facility, style = MaterialTheme.typography.bodyMedium)
+                    if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
+                }
+                Spacer(Modifier.height(10.dp))
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -254,17 +277,39 @@ fun DonateScreen(vm: AppViewModel, nav: NavController) {
                     Switch(checked = vm.available, onCheckedChange = vm::updateAvailability)
                 }
             }
-            SectionTitle("Open requests", action = "Find all", onAction = { nav.navigate("find_blood") })
-            if (active.isEmpty()) {
-                SmCard { Text("No open requests right now.", color = Muted) }
-            } else {
-                active.take(3).forEach { request ->
-                    SmCard(onClick = { nav.navigate("incoming/${request.id}") }) {
+        }
+        SectionTitle("Open requests", action = "Find all", onAction = { nav.navigate("find_blood") })
+        if (active.isEmpty()) {
+            SmCard { Text("No open requests right now.", color = Muted) }
+        } else {
+            active.take(3).forEach { request ->
+                SmCard(onClick = { nav.navigate("incoming/${request.id}") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${request.bloodGroup} · ${request.urgency.name}", style = MaterialTheme.typography.titleMedium)
-                        Text("${request.units} unit${if (request.units == 1) "" else "s"} · ${request.facility}", color = Muted)
+                        Spacer(Modifier.weight(1f))
+                        Tag(request.status.label, request.status.tone(), request.status.icon())
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Text("${request.units} unit${if (request.units == 1) "" else "s"} · ${request.facility}", color = Muted)
+                    if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
                 }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+        SectionTitle("Your requests", action = "View all", onAction = { nav.navigate("activity") })
+        if (vm.requests.isEmpty()) {
+            SmCard { Text("Requests you create will stay available here.", color = Muted) }
+        } else {
+            vm.requests.take(3).forEach { request ->
+                SmCard(onClick = { nav.navigate("activity") }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(request.bloodGroup, style = MaterialTheme.typography.titleLarge, color = Teal)
+                        Spacer(Modifier.weight(1f))
+                        Tag(request.status.label, request.status.tone(), request.status.icon())
+                    }
+                    Text(request.facility, style = MaterialTheme.typography.bodyMedium)
+                    if (request.facilityLocation.isNotBlank()) Text(request.facilityLocation, color = Muted)
+                }
+                Spacer(Modifier.height(10.dp))
             }
         }
         Spacer(Modifier.height(24.dp))

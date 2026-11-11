@@ -50,6 +50,74 @@ class BackendApiTest {
     }
 
     @Test
+    fun donorRegistrationUsesTheAtomicIndividualRegistrationEndpoint() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .addHeader("Set-Cookie", "sistermesh_refresh=refresh-value; Path=/api/auth; HttpOnly; Secure")
+                .setBody(sessionJson("INDIVIDUAL"))
+        )
+
+        api.registerDonor("Local user", "+2348012345678", "correct horse battery 24", "O_NEGATIVE", "Central")
+
+        val request = server.takeRequest()
+        val body = JSONObject(request.body.readUtf8())
+        assertEquals("/api/auth/register/donor", request.path)
+        assertEquals("O_NEGATIVE", body.getString("bloodGroup"))
+        assertEquals("Central", body.getString("locality"))
+        assertEquals("+2348012345678", body.getString("phoneNumber"))
+        assertEquals("correct horse battery 24", body.getString("password"))
+        assertTrue(!body.has("role"))
+    }
+
+    @Test
+    fun individualRegistrationUsesTheBackendRoleContract() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .addHeader("Set-Cookie", "sistermesh_refresh=refresh-value; Path=/api/auth; HttpOnly; Secure")
+                .setBody(sessionJson("INDIVIDUAL"))
+        )
+
+        api.registerIndividual("Local requester", "+2348012345678", "correct horse battery 24")
+
+        val request = server.takeRequest()
+        val body = JSONObject(request.body.readUtf8())
+        assertEquals("/api/auth/register", request.path)
+        assertEquals("INDIVIDUAL", body.getString("role"))
+        assertEquals("+2348012345678", body.getString("phoneNumber"))
+    }
+
+    @Test
+    fun requestFeedEndpointsUseTheSignedInIdentityAndSeparatePublicFromPrivateFields() = runBlocking {
+        val requestBody = """
+            [{
+              "id":"00000000-0000-4000-8000-000000000001",
+              "clientRequestId":"00000000-0000-4000-8000-000000000099",
+              "requestedBloodGroup":"O_NEGATIVE",
+              "urgency":"URGENT","units":1,"status":"OPEN",
+              "createdAt":"2026-11-07T11:00:00.000Z",
+              "facilityName":"Community Clinic","facilityLocation":"Central",
+              "isMine":true,"beneficiaryName":"Private name"
+            }]
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(requestBody))
+        server.enqueue(MockResponse().setBody(requestBody))
+
+        val eligible = api.getEligibleRequests("access-test").single()
+        val eligibleRequest = server.takeRequest()
+        val mine = api.getMyRequests("access-test").single()
+        val mineRequest = server.takeRequest()
+
+        assertEquals("/api/emergency-requests/eligible", eligibleRequest.path)
+        assertEquals("Bearer access-test", eligibleRequest.getHeader("Authorization"))
+        assertEquals("/api/emergency-requests/mine", mineRequest.path)
+        assertEquals("Bearer access-test", mineRequest.getHeader("Authorization"))
+        assertEquals(false, eligible.isMine)
+        assertEquals(true, mine.isMine)
+        assertEquals("Private name", mine.beneficiaryName)
+        assertEquals("00000000-0000-4000-8000-000000000099", eligible.clientRequestId)
+    }
+
+    @Test
     fun uploadUsesBearerIdentityAndStableBatchEnvelope() = runBlocking {
         server.enqueue(
             MockResponse().setBody(

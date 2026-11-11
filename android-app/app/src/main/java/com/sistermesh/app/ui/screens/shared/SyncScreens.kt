@@ -52,6 +52,15 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+private fun logoutToStartup(vm: AppViewModel, nav: NavController) {
+    vm.logout {
+        nav.navigate("splash") {
+            popUpTo(nav.graph.id) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+}
+
 @Composable
 fun SyncStatusCard(vm: AppViewModel, nav: NavController) {
     val currentUser = when (val state = vm.accountState) {
@@ -155,7 +164,7 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
                 Spacer(Modifier.height(10.dp))
                 Text(
                     when {
-                        roleMismatch -> "Sign out and connect an account that matches the local profile."
+                        roleMismatch -> "Log out and start again with an individual account."
                         vm.isAccountLinked -> "This phone is linked to this account. Events belonging to other accounts remain blocked."
                         else -> "Linking will associate unowned local events from this phone with this account. Events tied to another account will remain blocked."
                     },
@@ -164,7 +173,7 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
                 )
                 Spacer(Modifier.height(12.dp))
                 if (roleMismatch) {
-                    SmButton("Sign out", vm::disconnectAccount, style = BtnStyle.Outline, enabled = !vm.accountBusy)
+                    SmButton("Logout", { logoutToStartup(vm, nav) }, style = BtnStyle.Outline, enabled = !vm.accountBusy)
                 } else if (vm.isAccountLinked) {
                     Tag("Local profile linked", Tone.Good)
                     Spacer(Modifier.height(8.dp))
@@ -172,11 +181,11 @@ fun SyncAccountScreen(vm: AppViewModel, nav: NavController) {
                     Spacer(Modifier.height(8.dp))
                     SmButton("Link unassigned local records", { confirmLink = true }, style = BtnStyle.Outline, enabled = !vm.accountBusy)
                     Spacer(Modifier.height(8.dp))
-                    SmButton("Sign out", vm::disconnectAccount, style = BtnStyle.Outline, enabled = !vm.accountBusy)
+                    SmButton("Logout", { logoutToStartup(vm, nav) }, style = BtnStyle.Outline, enabled = !vm.accountBusy)
                 } else {
                     SmButton("Link local records", { confirmLink = true }, enabled = !vm.accountBusy)
                     Spacer(Modifier.height(8.dp))
-                    SmButton("Sign out", vm::disconnectAccount, style = BtnStyle.Outline, enabled = !vm.accountBusy)
+                    SmButton("Logout", { logoutToStartup(vm, nav) }, style = BtnStyle.Outline, enabled = !vm.accountBusy)
                 }
             }
         } else {

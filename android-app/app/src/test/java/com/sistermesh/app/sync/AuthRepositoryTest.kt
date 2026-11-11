@@ -63,6 +63,24 @@ class AuthRepositoryTest {
         assertTrue(api.refreshCalls > 0)
     }
 
+    @Test
+    fun logoutClearsLocalTokensEvenWhenServerRevocationIsUnavailable() = runBlocking {
+        val api = FakeApi().apply {
+            logoutHandler = {
+                loggedOutCookie = it
+                throw java.io.IOException("server unavailable")
+            }
+        }
+        val tokenStore = MemoryTokenStore(StoredTokens("access", "refresh"))
+        val auth = AuthRepository(api, tokenStore)
+
+        auth.logout()
+
+        assertNull(tokenStore.value)
+        assertEquals(AccountState.SignedOut, auth.state.value)
+        assertEquals("refresh", api.loggedOutCookie)
+    }
+
     private class MemoryTokenStore(var value: StoredTokens? = null) : TokenStore {
         override fun read(): StoredTokens? = value
         override fun write(tokens: StoredTokens) { value = tokens }
@@ -75,6 +93,7 @@ class AuthRepositoryTest {
         var loggedOutCookie: String? = null
         var refreshHandler: suspend (String) -> BackendSession = { loginSession }
         var getMeHandler: suspend (String) -> BackendUser = { loginSession.user }
+        var logoutHandler: suspend (String) -> Unit = { loggedOutCookie = it }
 
         override suspend fun login(phoneNumber: String, password: String) = loginSession
         override suspend fun registerIndividual(
@@ -98,12 +117,14 @@ class AuthRepositoryTest {
             isAvailable: Boolean?
         ) = BackendDonorProfile("donor-1", bloodGroup, locality, isAvailable ?: true, true)
         override suspend fun getMyDonations(accessToken: String) = emptyList<BackendDonorResponse>()
+        override suspend fun getEligibleRequests(accessToken: String) = emptyList<ServerRequestSnapshot>()
+        override suspend fun getMyRequests(accessToken: String) = emptyList<ServerRequestSnapshot>()
         override suspend fun refresh(refreshCookie: String): BackendSession {
             refreshCalls++
             return refreshHandler(refreshCookie)
         }
         override suspend fun logout(refreshCookie: String) {
-            loggedOutCookie = refreshCookie
+            logoutHandler(refreshCookie)
         }
         override suspend fun getMe(accessToken: String) = getMeHandler(accessToken)
         override suspend fun registerDevice(accessToken: String, clientDeviceId: String, deviceName: String) =

@@ -58,18 +58,22 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     }
 
     fun observeProfile() = profiles.observe().map { it?.toDomain() }
-    fun observeRequests() = requests.observeOutgoingWithResponses().map { rows -> rows.map { it.toDomain() } }
-    fun observeIncoming() = requests.observeIncoming().map { rows -> rows.map { it.toIncomingDomain() } }
-    fun observeReceipts() = confirmations.observeAll().map { rows -> rows.map { it.toReceipt() } }
-    fun observePendingEvents() = events.observePending()
-    fun observeEventsForReview() = events.observeNeedsReview()
+    fun observeRequests(accountId: String? = null, ownedServerIds: List<String> = emptyList()) =
+        requests.observeOutgoingWithResponsesForAccount(accountId, ownedServerIds)
+            .map { rows -> rows.map { it.toDomain() } }
+    fun observeIncoming(accountId: String? = null) =
+        requests.observeIncomingForAccount(accountId).map { rows -> rows.map { it.toIncomingDomain() } }
+    fun observeReceipts(accountId: String? = null) =
+        confirmations.observeForAccount(accountId).map { rows -> rows.map { it.toReceipt() } }
+    fun observePendingEvents(accountId: String? = null) = events.observePending(accountId)
+    fun observeEventsForReview(accountId: String? = null) = events.observeNeedsReview(accountId)
     fun observeAllEvents() = events.observeAll()
     fun observeDeviceInfo() = devices.observe()
     fun observeSyncState() = syncStates.observe()
-    fun observePendingSyncCount() = events.observePendingCount()
-    fun observeFailedSyncCount() = events.observeFailedCount()
-    fun observeConflicts() = conflicts.observeAll()
-    fun observeConflictCount() = conflicts.observeCount()
+    fun observePendingSyncCount(accountId: String? = null) = events.observePendingCount(accountId)
+    fun observeFailedSyncCount(accountId: String? = null) = events.observeFailedCount(accountId)
+    fun observeConflicts(accountId: String? = null) = conflicts.observeAll(accountId)
+    fun observeConflictCount(accountId: String? = null) = conflicts.observeCount(accountId)
 
     suspend fun getProfile(): Profile? = profiles.get()?.toDomain()
     suspend fun getPreferences(): Pair<Boolean, String> {
@@ -101,6 +105,8 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     suspend fun setLanguage(language: String) = profiles.setLanguage(language)
 
     suspend fun clearProfile() = profiles.clear()
+    suspend fun unlinkAccount() = devices.linkAccount(null)
+    suspend fun resetSyncStatus() = syncStates.upsert(SyncStateEntity())
 
     suspend fun createRequest(
         group: String,

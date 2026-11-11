@@ -49,6 +49,18 @@ enum class NearbyConnectionStatus {
     PAUSED
 }
 
+internal fun nearbySetupStatus(
+    foreground: Boolean,
+    permissionsGranted: Boolean,
+    bluetoothEnabled: Boolean,
+    wifiEnabled: Boolean
+): NearbyConnectionStatus = when {
+    !foreground -> NearbyConnectionStatus.PAUSED
+    !permissionsGranted -> NearbyConnectionStatus.NOT_CONFIGURED
+    !bluetoothEnabled && !wifiEnabled -> NearbyConnectionStatus.UNAVAILABLE
+    else -> NearbyConnectionStatus.CONNECTING
+}
+
 class NearbyConnectionsManager(
     context: Context,
     private val repository: MeshRepository,
@@ -338,7 +350,13 @@ class NearbyConnectionsManager(
     }
 
     private fun reconcile() {
-        if (!foreground) {
+        when (nearbySetupStatus(
+            foreground = foreground,
+            permissionsGranted = mutableState.value.permissionsGranted,
+            bluetoothEnabled = mutableState.value.bluetoothEnabled,
+            wifiEnabled = mutableState.value.wifiEnabled
+        )) {
+            NearbyConnectionStatus.PAUSED -> {
             stopTransport()
             updateState(
                 scanning = false,
@@ -346,8 +364,8 @@ class NearbyConnectionsManager(
                 statusText = "Nearby search starts while SisterMesh is in the foreground."
             )
             return
-        }
-        if (!mutableState.value.permissionsGranted) {
+            }
+            NearbyConnectionStatus.NOT_CONFIGURED -> {
             stopTransport()
             updateState(
                 scanning = false,
@@ -356,8 +374,8 @@ class NearbyConnectionsManager(
                 statusText = "Allow nearby-device permissions to connect to phones."
             )
             return
-        }
-        if (!mutableState.value.bluetoothEnabled && !mutableState.value.wifiEnabled) {
+            }
+            NearbyConnectionStatus.UNAVAILABLE -> {
             stopTransport()
             val message = "Turn on Bluetooth or Wi-Fi to search for nearby phones. Internet is not required."
             updateState(
@@ -367,6 +385,9 @@ class NearbyConnectionsManager(
                 statusText = message
             )
             return
+            }
+            NearbyConnectionStatus.CONNECTED -> return
+            NearbyConnectionStatus.CONNECTING -> Unit
         }
         if (running || starting) return
         starting = true

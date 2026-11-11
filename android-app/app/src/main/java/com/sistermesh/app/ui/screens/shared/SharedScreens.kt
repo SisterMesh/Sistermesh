@@ -264,7 +264,10 @@ fun ProfileScreen(vm: AppViewModel, nav: NavController) {
             TextButton({
                 confirmLogout = false
                 vm.logout {
-                    nav.navigate("home") { popUpTo(nav.graph.id) { inclusive = true } }
+                    nav.navigate("splash") {
+                        popUpTo(nav.graph.id) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 }
             }) { Text("Logout", color = Coral) }
         },

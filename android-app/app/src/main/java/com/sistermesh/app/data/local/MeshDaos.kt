@@ -107,6 +107,12 @@ interface MeshRequestRouteDao {
     @Query("SELECT * FROM mesh_request_routes WHERE originDeviceId = :originDeviceId AND originRequestLocalId = :originRequestLocalId LIMIT 1")
     suspend fun byOriginRequest(originDeviceId: String, originRequestLocalId: String): MeshRequestRouteEntity?
 
+    @Query("SELECT * FROM mesh_request_routes WHERE originEventId = :originEventId LIMIT 1")
+    suspend fun byOriginEvent(originEventId: String): MeshRequestRouteEntity?
+
+    @Query("DELETE FROM mesh_request_routes WHERE originDeviceId = :originDeviceId AND originRequestLocalId = :originRequestLocalId")
+    suspend fun deleteByOriginRequest(originDeviceId: String, originRequestLocalId: String)
+
     @Upsert
     suspend fun upsert(route: MeshRequestRouteEntity)
 
