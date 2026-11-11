@@ -1,117 +1,60 @@
-# SisterMesh Backend
+# SisterMesh
 
-NestJS and Prisma backend for the SisterMesh Android application. It provides
-password-based authentication, role-scoped user and facility management,
-emergency coordination APIs, and Swagger documentation.
+**Helping communities find willing blood donors during emergencies—even when
+internet access is unreliable.**
 
-The Phase 4 offline synchronization contract is documented in
-[docs/offline-sync-contract.md](docs/offline-sync-contract.md).
+SisterMesh is an Android app designed to connect people who need blood with
+community members willing to donate. It focuses on pregnancy and childbirth
+emergencies and on places where families cannot depend on mobile data or
+reliable phone networks. The project is starting in Akwa Ibom State, Nigeria.
 
-## Configuration
+## How SisterMesh works
 
-The Replit development workflow sets `DATABASE_URL` from the
-`SISTERMESH_DEV_DATABASE_URL` secret. Keep production credentials in the separate
-`DATABASE_URL` deployment secret; do not paste or commit either connection
-string. `PORT` is optional and defaults to `5000`.
+People use one of two modes:
 
-## Run
+- **I need blood** — create a request with the blood group, number of units,
+  urgency, and the facility where the blood is needed. The requester enters
+  the facility name and location so donors know where to go. A facility
+  verification flow is not required to submit a request.
+- **I want to donate blood** — receive nearby requests and choose whether to
+  respond. Donating is voluntary; people can accept or decline a request.
 
-```sh
-npm run prisma:generate
-```
+When internet access is unavailable, nearby Android phones can discover one
+another and exchange request updates directly. Participating phones can relay
+updates onward, helping requests travel beyond a single nearby connection.
+When internet access returns, the app can synchronize updates.
 
-Start the configured **SisterMesh Backend** development workflow to run
-`DATABASE_URL="$SISTERMESH_DEV_DATABASE_URL" npm run start:dev`.
-The API is served under `/api`; Swagger UI is at `/api/docs`, and the public
-health check is `GET /api/health`.
+The map supports cached map areas when available and lets a requester place a
+pin manually. SisterMesh does not bundle offline map coverage for all of
+Nigeria; the map details available offline depend on what has been cached on
+the phone.
 
-## Authentication and profiles
+Voice-assisted request entry can help capture details such as blood group,
+units, and facility. Supported on-device speech features work offline after
+their language model is available; initial setup may require an internet
+connection, and offline language support depends on the device.
 
-- Individuals register at `POST /api/auth/register/donor`; this legacy route
-  creates an `INDIVIDUAL` account. A donor profile is optional and is managed
-  separately at `/api/donors/me`. Health workers register at
-  `POST /api/auth/register/health-worker`.
-- `POST /api/auth/login` returns a short-lived access token. A rotating refresh
-  token is stored in an HttpOnly, Secure cookie and is never returned in JSON.
-- `POST /api/auth/refresh` rotates that cookie; `POST /api/auth/logout` revokes
-  the presented refresh session.
-- Send access tokens as `Authorization: Bearer <token>`. `GET /api/auth/me` and
-  `GET/PATCH /api/users/me` operate on the authenticated account only.
-- Donor profiles use `GET/POST/PATCH /api/donors/me`; health worker profiles use
-  `GET/POST/PATCH /api/health-workers/me`.
-- Health workers register as unverified and are not assigned a facility until
-  an administrator verifies and associates them.
+## Privacy and safety
 
-## Facilities and authorization
+- Donors see the information needed to respond, including the requester-entered
+  facility and destination location.
+- A patient's or beneficiary's name and private notes are not shared with
+  donors.
+- Donors decide freely whether to respond. A request does not guarantee that a
+  donor will be available.
+- SisterMesh supports coordination; it does not replace emergency care,
+  clinical assessment, or professional decisions about blood compatibility and
+  transfusion.
 
-- `GET /api/facilities` and `GET /api/facilities/:facilityId` expose public
-  details for active facilities.
-- Administrators manage facilities under `/api/admin/facilities` and verify or
-  associate workers under `/api/admin/health-workers`.
-- New facilities require administrator approval. Only verified health workers
-  assigned to active facilities can use facility-scoped coordination routes.
-- Registration never accepts a role field and there is no public admin
-  registration route. Initial administrator provisioning is an operator task.
+## Initial focus and goals
 
-## Coordination endpoints
+SisterMesh is being developed for communities in Akwa Ibom State, with the aim
+of supporting other communities that face similar connectivity challenges.
+Proposed pilot goals include working with up to 20 health facilities over 12
+months, supporting offline voice features in three languages, and measuring
+request-to-response time, requests receiving a willing donor, and donor
+retention. These are project goals, not reported pilot results.
 
-- Individuals and verified health workers create requests under
-  `/api/emergency-requests`. New requests remain private in
-  `PENDING_FACILITY_VERIFICATION` until a verified worker for the associated
-  active facility approves them.
-- Individuals with a complete, available donor profile view compatible,
-  approved requests at `GET
-/api/emergency-requests/eligible`, submit one response per request at
-  `POST /api/donor-responses/:requestId`, and list responses at
-  `GET /api/donor-responses/mine`.
-- Health workers confirm a donation at
-  `POST /api/emergency-requests/:requestId/donations/confirm`.
-- Request creation uses a UUID `clientRequestId`; donor responses and donation
-  confirmations use UUID `idempotencyKey` values.
-
-## Database
-
-The Prisma schema is in `prisma/schema.prisma`; migration files are in
-`prisma/migrations`. After reviewing each new additive migration and confirming
-the target schema is safe to extend, apply it with:
-
-```sh
-npm run prisma:migrate:deploy
-```
-
-Migrations are additive and should never be used to replace the existing Neon
-database. Do not run destructive schema changes without explicit approval.
-
-## Authentication and administrator access
-
-Set the existing `SESSION_SECRET` in Replit Secrets to a random value of at
-least 32 bytes. The API derives separate access-token and refresh-token signing
-keys from it. Access tokens last 15 minutes; refresh tokens are rotated, stored
-only as hashes, and sent only in an HTTP-only cookie.
-
-Public registration accepts only `INDIVIDUAL` or `HEALTH_WORKER`; it cannot
-create administrators. The donor-registration route creates the `INDIVIDUAL`
-role. To bootstrap an administrator, an authorised operator must verify the
-person through the controlled process, then run `npm run admin:promote` from a
-trusted Replit shell and confirm the exact account. Later role changes are
-restricted to authenticated administrator endpoints. Never run the bootstrap
-command in an untrusted shell.
-
-Facilities are created by administrators in `PENDING` status and require an
-administrator status change before they become available. Health workers begin
-unverified; only administrators can verify them or assign them to an active
-facility.
-
-## Checks
-
-```sh
-npm test
-npm run test:e2e
-npm run test:db
-npm run build
-npm run prisma:validate
-```
-
-`test:db` creates and removes uniquely identified integration fixtures; run it
-only with the development workflow's `SISTERMESH_DEV_DATABASE_URL`. It does not
-reset the database. Prisma schema validation does not apply migrations.
+The project is intended for open collaboration and reuse. A formal licence,
+contribution guide, and deployment materials should accompany the public
+release.
