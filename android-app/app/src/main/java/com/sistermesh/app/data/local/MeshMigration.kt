@@ -198,7 +198,7 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
         db.execSQL("UPDATE `profiles` SET `role` = 'INDIVIDUAL', `useMode` = 'FIND_BLOOD' WHERE `role` = 'CHW'")
         db.execSQL("UPDATE `emergency_requests` SET `kind` = 'OUTGOING' WHERE `kind` = 'FACILITY'")
         db.execSQL(
-            "UPDATE `emergency_requests` SET `status` = 'OPEN' WHERE `status` IN ('PENDING_FACILITY_VERIFICATION', 'NEEDS_INFORMATION')"
+            "UPDATE `emergency_requests` SET `status` = 'OPEN' WHERE `status` IN ('PENDING_FACILITY_VERIFICATION', 'NEEDS_INFORMATION') OR (`kind` = 'OUTGOING' AND `status` = 'SEARCHING')"
         )
     }
 }

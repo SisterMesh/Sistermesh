@@ -192,7 +192,8 @@ class SyncEngineTest {
             assertEquals("Keep this local note", request?.note)
             assertEquals("OPEN", request?.status)
             assertEquals("1", request?.lastServerCursor)
-            assertEquals("Community Clinic, Central, Rivers", request?.facility)
+            assertEquals("Community Clinic", request?.facility)
+            assertEquals("Central, Rivers", request?.facilityLocation)
             assertEquals("CONFLICT", request?.syncStatus)
         } finally {
             database.close()
@@ -206,21 +207,7 @@ class SyncEngineTest {
             val fixture = initialize(database)
             val worker = fixture.user.copy(
                 role = "HEALTH_WORKER",
-                donorBloodGroup = null,
-                healthWorkerVerificationStatus = "PENDING",
-                healthWorkerFacilityId = null
-            )
-            database.profileDao().upsert(
-                ProfileEntity(
-                    role = "CHW",
-                    name = "Local worker",
-                    bloodGroup = "",
-                    area = "",
-                    phone = "+2348012345678",
-                    facility = "Unverified facility",
-                    facilityLocation = "",
-                    designation = "Nurse"
-                )
+                donorBloodGroup = null
             )
             val api = FakeSyncApi(worker, database)
             val engine = SyncEngine(database, api, AuthRepository(api, MemoryTokenStore()))
@@ -271,8 +258,6 @@ class SyncEngineTest {
             donorBloodGroup = "O_NEGATIVE",
             donorLocality = "Central",
             donorProfileComplete = true,
-            healthWorkerVerificationStatus = null,
-            healthWorkerFacilityId = null
         )
         database.profileDao().upsert(
             ProfileEntity(
@@ -333,7 +318,6 @@ class SyncEngineTest {
             bloodGroup: String,
             locality: String
         ) = error("Not used.")
-        override suspend fun listFacilities() = emptyList<BackendFacility>()
         override suspend fun createDonorProfile(accessToken: String, bloodGroup: String, locality: String) =
             BackendDonorProfile("donor-1", bloodGroup, locality, true, true)
         override suspend fun updateDonorProfile(
@@ -343,13 +327,6 @@ class SyncEngineTest {
             isAvailable: Boolean?
         ) = BackendDonorProfile("donor-1", bloodGroup, locality, isAvailable ?: true, true)
         override suspend fun getMyDonations(accessToken: String) = emptyList<BackendDonorResponse>()
-        override suspend fun registerHealthWorker(
-            displayName: String,
-            phoneNumber: String,
-            password: String,
-            designation: String,
-            professionalId: String
-        ) = error("Not used.")
         override suspend fun refresh(refreshCookie: String) = error("Not used.")
         override suspend fun logout(refreshCookie: String) = Unit
         override suspend fun getMe(accessToken: String) = user
@@ -407,6 +384,7 @@ class SyncEngineTest {
                             createdAt = "2026-11-07T11:00:00Z",
                             updatedAt = "2026-11-07T11:00:00Z",
                             facilityName = "Community Clinic",
+                            facilityLocation = "Central, Rivers",
                             facilityLocality = "Central",
                             facilityState = "Rivers",
                             isMine = serverRequestIsMine,

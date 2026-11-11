@@ -49,17 +49,4 @@ export class DonorResponsesController {
     return this.service.withdraw(user, requestId, dto);
   }
 
-  @Get('requests/:requestId')
-  @Roles(UserRole.HEALTH_WORKER)
-  @ApiOperation({
-    summary: 'List response status for a request at the signed-in health worker’s facility.',
-    description: 'Returns only response state and donor profile ID/blood group; no donor contact details.',
-  })
-  @ApiResponse({ status: 404, description: 'The request is not managed by the health worker’s facility.' })
-  listForRequest(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('requestId', ParseUUIDPipe) requestId: string,
-  ) {
-    return this.service.listForRequest(user, requestId);
-  }
 }

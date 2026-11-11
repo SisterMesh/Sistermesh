@@ -77,7 +77,7 @@ describe('Authentication HTTP endpoints', () => {
         displayName: 'Amina Donor',
         phoneNumber: '+2348012345678',
         password: 'Strong password 2026',
-        role: 'DONOR',
+        role: 'INDIVIDUAL',
       })
       .expect(201);
 
@@ -107,7 +107,7 @@ describe('Authentication HTTP endpoints', () => {
         displayName: 'Amina Donor',
         phoneNumber: '+2348012345678',
         password: 'Strong password 2026',
-        role: 'DONOR',
+        role: 'INDIVIDUAL',
         status: 'ACTIVE',
       })
       .expect(400);
@@ -119,7 +119,7 @@ describe('Authentication HTTP endpoints', () => {
       accessToken: 'new-access',
       expiresIn: 900,
       refreshToken: 'new-private-cookie',
-      user: { id: 'user-id', role: 'DONOR' },
+      user: { id: 'user-id', role: 'INDIVIDUAL' },
     });
     const response = await request(app.getHttpServer())
       .post('/api/auth/refresh')

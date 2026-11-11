@@ -243,11 +243,6 @@ fun ActivityScreen(vm: AppViewModel, nav: NavController) {
                     Tag(request.status.label, request.status.tone(), request.status.icon())
                 }
                 Text("${request.units} unit${if (request.units == 1) "" else "s"} · ${request.facility}", color = Muted)
-                request.reviewReason?.let { Text(it, color = Coral) }
-                if (request.status == RequestStatus.NEEDS_INFORMATION) {
-                    Spacer(Modifier.height(10.dp))
-                    SmButton("Update request", { nav.navigate("edit_request/${request.id}") }, style = com.sistermesh.app.ui.components.BtnStyle.Soft)
-                }
                 if (request.status.isActive) {
                     Spacer(Modifier.height(6.dp))
                     TextButton(onClick = { vm.cancelRequest(request.id) }) { Text("Cancel request", color = Coral) }
@@ -307,10 +302,6 @@ fun EditRequestSubmissionScreen(vm: AppViewModel, nav: NavController, requestId:
         if (request == null) {
             Notice("This request is not available on this device.")
         } else {
-            request.reviewReason?.let {
-                Notice("Previous note: $it")
-                Spacer(Modifier.height(12.dp))
-            }
             Text("Update the request details.", color = Muted)
             SectionTitle("Blood needed")
             BloodGroupPicker(group, { group = it }, error = tried && group.isBlank())
@@ -436,7 +427,7 @@ fun UnifiedCreateRequestScreen(vm: AppViewModel, nav: NavController) {
             Spacer(Modifier.height(10.dp))
         }
         Text(
-            "Enter the place where donors should go. Your request is available without facility approval.",
+            "Enter the place where donors should go. Requests are shared directly with eligible donors.",
             style = MaterialTheme.typography.bodyLarge,
             color = Muted
         )

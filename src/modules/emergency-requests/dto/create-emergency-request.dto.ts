@@ -70,7 +70,7 @@ export class CreateEmergencyRequestDto {
   @MaxLength(80)
   beneficiaryRelationship?: string;
 
-  @ApiPropertyOptional({ maxLength: 1000, description: 'Private information for the assigned facility only.' })
+  @ApiPropertyOptional({ maxLength: 1000, description: 'Private coordination note; never sent to donors.' })
   @IsOptional()
   @IsString()
   @MaxLength(1000)

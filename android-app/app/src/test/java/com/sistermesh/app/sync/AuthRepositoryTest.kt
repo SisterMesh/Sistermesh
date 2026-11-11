@@ -89,7 +89,6 @@ class AuthRepositoryTest {
             bloodGroup: String,
             locality: String
         ) = loginSession
-        override suspend fun listFacilities() = emptyList<BackendFacility>()
         override suspend fun createDonorProfile(accessToken: String, bloodGroup: String, locality: String) =
             BackendDonorProfile("donor-1", bloodGroup, locality, true, true)
         override suspend fun updateDonorProfile(
@@ -99,13 +98,6 @@ class AuthRepositoryTest {
             isAvailable: Boolean?
         ) = BackendDonorProfile("donor-1", bloodGroup, locality, isAvailable ?: true, true)
         override suspend fun getMyDonations(accessToken: String) = emptyList<BackendDonorResponse>()
-        override suspend fun registerHealthWorker(
-            displayName: String,
-            phoneNumber: String,
-            password: String,
-            designation: String,
-            professionalId: String
-        ) = loginSession
         override suspend fun refresh(refreshCookie: String): BackendSession {
             refreshCalls++
             return refreshHandler(refreshCookie)
@@ -141,6 +133,4 @@ private fun donorUser(role: String = "INDIVIDUAL") = BackendUser(
     donorBloodGroup = "O_NEGATIVE",
     donorLocality = "Central",
     donorProfileComplete = true,
-    healthWorkerVerificationStatus = null,
-    healthWorkerFacilityId = null
 )

@@ -38,16 +38,13 @@ class MeshRepositoryTest {
         context.deleteDatabase(databaseName)
         var database = fileDatabase(databaseName)
         try {
-            val appRepository = configuredWorker(database)
+            val appRepository = configuredRequester(database)
             val request = appRepository.createRequest(
-                "O-", Urgency.CRITICAL, 2, "facility-1", false, "Patient name", "Sibling", "Local-only note"
+                "O-", Urgency.CRITICAL, 2, "Community Clinic", "Riverside", null, null,
+                false, "Patient name", "Sibling", "Local-only note"
             )
             val event = appRepository.observeAllEvents().first().single { it.eventType == "request.create" }
             val meshRepository = MeshRepository(database, TestMeshSigner())
-            meshRepository.ensureOutgoing(event)
-            assertNull(database.meshMessageDao().get(event.eventId))
-            val local = database.emergencyRequestDao().get(request.id)!!
-            database.emergencyRequestDao().upsert(local.copy(status = RequestStatus.OPEN.name))
             meshRepository.ensureOutgoing(event)
 
             val queued = database.meshMessageDao().get(event.eventId)
@@ -76,8 +73,11 @@ class MeshRepositoryTest {
         val sourceDb = inMemoryDatabase()
         val relayDb = inMemoryDatabase()
         try {
-            val sourceApp = configuredWorker(sourceDb)
-            val request = sourceApp.createRequest("O-", Urgency.URGENT, 1, "facility-1", false, "Patient X", null, "must stay local")
+            val sourceApp = configuredRequester(sourceDb)
+            val request = sourceApp.createRequest(
+                "O-", Urgency.URGENT, 1, "Community Clinic", "Riverside", null, null,
+                false, "Patient X", null, "must stay local"
+            )
             sourceDb.emergencyRequestDao().get(request.id)?.let {
                 sourceDb.emergencyRequestDao().upsert(it.copy(status = RequestStatus.OPEN.name))
             }
@@ -147,10 +147,11 @@ class MeshRepositoryTest {
             val databases = (0 until deviceCount).map { inMemoryDatabase() }
             try {
                 val appRepositories = databases.mapIndexed { index, database ->
-                    if (index == 0) configuredWorker(database) else SisterMeshRepository(database).also { it.initialize() }
+                    if (index == 0) configuredRequester(database) else SisterMeshRepository(database).also { it.initialize() }
                 }
                 val request = appRepositories.first().createRequest(
-                    "AB+", Urgency.CRITICAL, 3, "facility-1", false, "Private patient", null, "private note"
+                    "AB+", Urgency.CRITICAL, 3, "Community Clinic", "Riverside", null, null,
+                    false, "Private patient", null, "private note"
                 )
                 databases.first().emergencyRequestDao().get(request.id)?.let {
                     databases.first().emergencyRequestDao().upsert(it.copy(status = RequestStatus.OPEN.name))
@@ -195,13 +196,13 @@ class MeshRepositoryTest {
         }
     }
 
-    private suspend fun configuredWorker(database: SisterMeshDatabase): SisterMeshRepository {
+    private suspend fun configuredRequester(database: SisterMeshDatabase): SisterMeshRepository {
         val repository = SisterMeshRepository(database)
         repository.initialize()
         repository.registerProfile(
             Profile(
-                role = Role.CHW,
-                name = "Worker",
+                role = Role.INDIVIDUAL,
+                name = "Requester",
                 facility = "Community Clinic",
                 facilityLocation = "Riverside",
                 designation = "Nurse"

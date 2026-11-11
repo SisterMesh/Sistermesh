@@ -6,8 +6,6 @@ import { AuthenticatedUser } from "../src/common/authenticated-user";
 import { RolesGuard } from "../src/common/roles.guard";
 import { AuthModule } from "../src/modules/auth/auth.module";
 import { AccessTokenService } from "../src/modules/auth/access-token.service";
-import { DonationConfirmationsController } from "../src/modules/donation-confirmations/donation-confirmations.controller";
-import { DonationConfirmationsService } from "../src/modules/donation-confirmations/donation-confirmations.service";
 import { DonorResponsesController } from "../src/modules/donor-responses/donor-responses.controller";
 import { DonorResponsesService } from "../src/modules/donor-responses/donor-responses.service";
 import { EmergencyRequestsController } from "../src/modules/emergency-requests/emergency-requests.controller";
@@ -26,27 +24,17 @@ describe("coordination API with verified JWT authentication", () => {
     user: {
       findUnique: jest.fn(),
     },
-    healthWorkerProfile: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ verificationStatus: "VERIFIED" }),
-    },
   };
   const emergencyRequests = {
     create: jest.fn(),
     listEligible: jest.fn(),
-    listForFacility: jest.fn(),
-    history: jest.fn(),
     cancel: jest.fn(),
-    updateStatus: jest.fn(),
   };
   const donorResponses = {
     respond: jest.fn(),
     listMine: jest.fn(),
     withdraw: jest.fn(),
-    listForRequest: jest.fn(),
   };
-  const donationConfirmations = { confirm: jest.fn() };
   const offlineSync = {
     registerDevice: jest.fn(),
     listDevices: jest.fn(),
@@ -69,17 +57,12 @@ describe("coordination API with verified JWT authentication", () => {
       controllers: [
         EmergencyRequestsController,
         DonorResponsesController,
-        DonationConfirmationsController,
         OfflineSyncController,
       ],
       providers: [
         RolesGuard,
         { provide: EmergencyRequestsService, useValue: emergencyRequests },
         { provide: DonorResponsesService, useValue: donorResponses },
-        {
-          provide: DonationConfirmationsService,
-          useValue: donationConfirmations,
-        },
         { provide: OfflineSyncService, useValue: offlineSync },
       ],
     })
@@ -106,9 +89,6 @@ describe("coordination API with verified JWT authentication", () => {
       async (args: { where: { id: string } }) =>
         actors.get(args.where.id) ?? null,
     );
-    prismaMock.healthWorkerProfile.findUnique.mockResolvedValue({
-      verificationStatus: "VERIFIED",
-    });
   });
 
   afterAll(async () => {
@@ -161,10 +141,10 @@ describe("coordination API with verified JWT authentication", () => {
       .post("/api/emergency-requests")
       .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
       .send({ ...body, units: 0 })
-      .expect(400);
+      .expect(403);
   });
 
-  it("accepts a signed-in worker request using the database role, not client headers", async () => {
+  it("accepts an individual request with a free-form destination", async () => {
     const created = {
       id: "00000000-0000-4000-8000-000000000010",
       status: "OPEN",
@@ -174,18 +154,19 @@ describe("coordination API with verified JWT authentication", () => {
       requestedBloodGroup: "O_NEGATIVE",
       urgency: "CRITICAL",
       units: 2,
+      facilityName: "Community Clinic",
+      facilityLocation: "Riverside Road, Uyo",
     };
     emergencyRequests.create.mockResolvedValue(created);
 
     await request(app.getHttpServer())
       .post("/api/emergency-requests")
-      .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
-      .set("x-test-role", UserRole.ADMIN)
+      .set("Authorization", await bearer(UserRole.INDIVIDUAL))
       .send(body)
       .expect(201, created);
 
     expect(emergencyRequests.create).toHaveBeenCalledWith(
-      expect.objectContaining({ role: UserRole.HEALTH_WORKER }),
+      expect.objectContaining({ role: UserRole.INDIVIDUAL }),
       body,
     );
   });
@@ -219,52 +200,21 @@ describe("coordination API with verified JWT authentication", () => {
     );
   });
 
-  it("confirms a donation only through a health worker bearer token", async () => {
-    const confirmation = { id: "confirmation-1" };
-    donationConfirmations.confirm.mockResolvedValue(confirmation);
-    const body = {
-      idempotencyKey: "00000000-0000-4000-8000-000000000013",
-      donorProfileId: "00000000-0000-4000-8000-000000000014",
-      receiptHash: "a".repeat(64),
-    };
-
-    await request(app.getHttpServer())
-      .post(
-        "/api/emergency-requests/00000000-0000-4000-8000-000000000010/donations/confirm",
-      )
-      .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
-      .send(body)
-      .expect(201, confirmation);
-
-    expect(donationConfirmations.confirm).toHaveBeenCalledWith(
-      expect.objectContaining({ role: UserRole.HEALTH_WORKER }),
-      "00000000-0000-4000-8000-000000000010",
-      body,
-    );
-  });
-
-  it("restricts facility response lists to health workers and supports donor withdrawal retries", async () => {
+  it("does not expose facility response lists and supports donor withdrawal retries", async () => {
     const requestId = "00000000-0000-4000-8000-000000000020";
-    const rows = [{ id: "response-1", status: "ACCEPTED" }];
     const withdrawn = { id: "response-1", status: "WITHDRAWN" };
-    donorResponses.listForRequest.mockResolvedValue(rows);
     donorResponses.withdraw.mockResolvedValue(withdrawn);
 
     await request(app.getHttpServer())
       .get(`/api/donor-responses/requests/${requestId}`)
       .set("Authorization", await bearer(UserRole.INDIVIDUAL))
-      .expect(403);
-    await request(app.getHttpServer())
-      .get(`/api/donor-responses/requests/${requestId}`)
-      .set("Authorization", await bearer(UserRole.HEALTH_WORKER))
-      .expect(200, rows);
+      .expect(404);
     await request(app.getHttpServer())
       .post(`/api/donor-responses/${requestId}/withdraw`)
       .set("Authorization", await bearer(UserRole.INDIVIDUAL))
       .send({ idempotencyKey: "00000000-0000-4000-8000-000000000021" })
       .expect(201, withdrawn);
 
-    expect(donorResponses.listForRequest).toHaveBeenCalled();
     expect(donorResponses.withdraw).toHaveBeenCalledWith(
       expect.objectContaining({ role: UserRole.INDIVIDUAL }),
       requestId,
@@ -279,7 +229,7 @@ describe("coordination API with verified JWT authentication", () => {
       status: "COMPLETED",
       events: [],
     });
-    const token = await bearer(UserRole.HEALTH_WORKER);
+    const token = await bearer(UserRole.INDIVIDUAL);
 
     await request(app.getHttpServer())
       .post("/api/sync/devices")
@@ -311,7 +261,7 @@ describe("coordination API with verified JWT authentication", () => {
       .expect(400);
     expect(offlineSync.registerDevice).toHaveBeenCalledTimes(1);
     expect(offlineSync.registerDevice).toHaveBeenCalledWith(
-      expect.objectContaining({ role: UserRole.HEALTH_WORKER }),
+      expect.objectContaining({ role: UserRole.INDIVIDUAL }),
       { clientDeviceId: "00000000-0000-4000-8000-000000000032" },
     );
     expect(offlineSync.uploadBatch).not.toHaveBeenCalled();

@@ -21,7 +21,6 @@ describe('AuthService', () => {
       locality: 'Central district',
       isProfileComplete: true,
     },
-    healthWorkerProfile: null,
   };
   const tokens = { issue: jest.fn().mockResolvedValue('signed-access-token') };
 

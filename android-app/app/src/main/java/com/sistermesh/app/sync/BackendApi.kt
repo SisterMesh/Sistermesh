@@ -24,8 +24,6 @@ data class BackendUser(
     val donorBloodGroup: String?,
     val donorLocality: String?,
     val donorProfileComplete: Boolean,
-    val healthWorkerVerificationStatus: String?,
-    val healthWorkerFacilityId: String?,
     val donorAvailable: Boolean? = null
 )
 
@@ -425,7 +423,6 @@ class BackendApi(
 
     private fun parseUser(json: JSONObject): BackendUser {
         val donor = json.optJSONObject("donorProfile")
-        val worker = json.optJSONObject("healthWorkerProfile")
         return BackendUser(
             id = json.requiredString("id"),
             role = json.requiredString("role"),
@@ -436,8 +433,6 @@ class BackendApi(
             donorBloodGroup = donor?.optNullableString("bloodGroup"),
             donorLocality = donor?.optNullableString("locality"),
             donorProfileComplete = donor?.optBoolean("isProfileComplete") ?: false,
-            healthWorkerVerificationStatus = worker?.optNullableString("verificationStatus"),
-            healthWorkerFacilityId = worker?.optNullableString("facilityId"),
             donorAvailable = donor?.takeIf { it.has("isAvailable") }?.optBoolean("isAvailable")
         )
     }

@@ -5,10 +5,6 @@ import request from "supertest";
 import { RolesGuard } from "../src/common/roles.guard";
 import { AuthModule } from "../src/modules/auth/auth.module";
 import { AccessTokenService } from "../src/modules/auth/access-token.service";
-import { AdminFacilitiesController } from "../src/modules/facilities/admin-facilities.controller";
-import { FacilitiesService } from "../src/modules/facilities/facilities.service";
-import { AdminHealthWorkersController } from "../src/modules/health-workers/admin-health-workers.controller";
-import { HealthWorkersService } from "../src/modules/health-workers/health-workers.service";
 import { PrismaModule } from "../src/modules/prisma/prisma.module";
 import { PrismaService } from "../src/modules/prisma/prisma.service";
 import { AdminUsersController } from "../src/modules/users/admin-users.controller";
@@ -34,7 +30,6 @@ describe("Phase 2 authentication and access control", () => {
       locality: "Central",
       isProfileComplete: true,
     },
-    healthWorkerProfile: null,
   };
   const prismaMock = {
     user: {
@@ -46,31 +41,12 @@ describe("Phase 2 authentication and access control", () => {
       findUnique: jest.fn(),
       updateMany: jest.fn(),
     },
-    healthWorkerProfile: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ verificationStatus: "VERIFIED" }),
-    },
   };
   const usersService = {
     getMine: jest.fn(),
     updateMine: jest.fn(),
     updateAccountStatus: jest.fn(),
   };
-  const facilitiesService = {
-    create: jest.fn(),
-    listForAdmin: jest.fn(),
-    getForAdmin: jest.fn(),
-    listHealthWorkers: jest.fn(),
-    update: jest.fn(),
-    updateStatus: jest.fn(),
-  };
-  const healthWorkersService = {
-    setVerification: jest.fn(),
-    assignFacility: jest.fn(),
-    removeFacilityAssignment: jest.fn(),
-  };
-
   beforeAll(async () => {
     process.env.SESSION_SECRET =
       "test-only-session-secret-with-more-than-32-bytes";
@@ -88,17 +64,10 @@ describe("Phase 2 authentication and access control", () => {
     );
     const module = await Test.createTestingModule({
       imports: [PrismaModule, AuthModule],
-      controllers: [
-        UsersController,
-        AdminUsersController,
-        AdminFacilitiesController,
-        AdminHealthWorkersController,
-      ],
+      controllers: [UsersController, AdminUsersController],
       providers: [
         RolesGuard,
         { provide: UsersService, useValue: usersService },
-        { provide: FacilitiesService, useValue: facilitiesService },
-        { provide: HealthWorkersService, useValue: healthWorkersService },
       ],
     })
       .overrideProvider(PrismaService)
@@ -133,9 +102,6 @@ describe("Phase 2 authentication and access control", () => {
         return null;
       },
     );
-    prismaMock.healthWorkerProfile.findUnique.mockResolvedValue({
-      verificationStatus: "VERIFIED",
-    });
   });
 
   afterAll(async () => {
@@ -148,9 +114,7 @@ describe("Phase 2 authentication and access control", () => {
     const id =
       role === UserRole.INDIVIDUAL
         ? safeDonor.id
-        : role === UserRole.HEALTH_WORKER
-          ? "00000000-0000-4000-8000-000000000053"
-          : "00000000-0000-4000-8000-000000000054";
+        : "00000000-0000-4000-8000-000000000054";
     actorRecords.set(id, {
       id,
       role,
@@ -181,6 +145,10 @@ describe("Phase 2 authentication and access control", () => {
       .send({ ...body, role: "ADMIN" })
       .expect(400);
     expect(prismaMock.user.create).not.toHaveBeenCalled();
+    await request(app.getHttpServer())
+      .post("/api/auth/register/health-worker")
+      .send(body)
+      .expect(404);
 
     const response = await request(app.getHttpServer())
       .post("/api/auth/register/donor")
@@ -247,40 +215,19 @@ describe("Phase 2 authentication and access control", () => {
     );
   });
 
-  it("restricts facility administration and worker verification to database-authenticated admins", async () => {
-    const createResult = {
-      id: "00000000-0000-4000-8000-000000000055",
-      status: "PENDING",
-    };
-    facilitiesService.create.mockResolvedValue(createResult);
-    const body = { name: "SisterMesh Central Clinic" };
-
+  it("does not expose the retired facility or health-worker administration routes", async () => {
+    const authorization = await bearer(UserRole.ADMIN);
     await request(app.getHttpServer())
       .post("/api/admin/facilities")
-      .set("Authorization", await bearer(UserRole.INDIVIDUAL))
-      .send(body)
-      .expect(403);
-    await request(app.getHttpServer())
-      .post("/api/admin/facilities")
-      .set("Authorization", await bearer(UserRole.ADMIN))
-      .send(body)
-      .expect(201, createResult);
-
-    expect(facilitiesService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ role: UserRole.ADMIN }),
-      body,
-    );
-  });
-
-  it("does not trust client role headers over the signed-in database account", async () => {
+      .set("Authorization", authorization)
+      .send({ name: "SisterMesh Central Clinic" })
+      .expect(404);
     await request(app.getHttpServer())
       .patch(
         "/api/admin/health-workers/00000000-0000-4000-8000-000000000053/verification",
       )
-      .set("Authorization", await bearer(UserRole.INDIVIDUAL))
-      .set("x-test-role", UserRole.ADMIN)
+      .set("Authorization", authorization)
       .send({ verificationStatus: "VERIFIED" })
-      .expect(403);
-    expect(healthWorkersService.setVerification).not.toHaveBeenCalled();
+      .expect(404);
   });
 });

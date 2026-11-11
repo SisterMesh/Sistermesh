@@ -110,7 +110,7 @@ fun UseModeScreen(vm: AppViewModel, onBack: () -> Unit, onContinue: (UseMode) ->
         Spacer(Modifier.height(12.dp))
         Text("How will you use SisterMesh?", style = MaterialTheme.typography.headlineLarge)
         Spacer(Modifier.height(8.dp))
-        Text("Choose what you need today. You can change this later.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Text("Choose how you want to use the app.", style = MaterialTheme.typography.bodyLarge, color = Muted)
         Spacer(Modifier.height(28.dp))
         RoleCard(Icons.Rounded.Search, "I want to find blood", "Create a request for yourself or someone else.", mode == UseMode.FIND_BLOOD) { vm.pendingUseMode = UseMode.FIND_BLOOD }
         Spacer(Modifier.height(14.dp))
@@ -176,7 +176,15 @@ fun DonorRegistrationScreen(vm: AppViewModel, mode: UseMode, onBack: () -> Unit,
     }) {
         BackHeader(if (mode == UseMode.FIND_BLOOD) "Find blood" else "Donate blood", onBack)
         Spacer(Modifier.height(8.dp))
-        Text("Create one account to request blood for yourself or someone else. Donor participation is optional.", style = MaterialTheme.typography.bodyLarge, color = Muted)
+        Text(
+            if (mode == UseMode.FIND_BLOOD) {
+                "Create a profile to request blood for yourself or someone else."
+            } else {
+                "Create a donor profile to see nearby requests and choose when you can help."
+            },
+            style = MaterialTheme.typography.bodyLarge,
+            color = Muted
+        )
         Spacer(Modifier.height(24.dp))
         SmField("Name or display name", name, { name = it }, error = if (tried && name.isBlank()) "Enter a name" else null)
         Spacer(Modifier.height(4.dp))

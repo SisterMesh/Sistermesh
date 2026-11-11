@@ -227,21 +227,17 @@ class AppViewModel(
         }
     }
 
-    fun disconnectAccount() = endSession(clearLocalProfile = false) {}
+    fun disconnectAccount() = endSession {}
 
-    fun logout(onDone: () -> Unit) = endSession(clearLocalProfile = true, onDone = onDone)
+    fun logout(onDone: () -> Unit) = endSession(onDone)
 
-    private fun endSession(clearLocalProfile: Boolean, onDone: () -> Unit) {
+    private fun endSession(onDone: () -> Unit) {
         accountBusy = true
         accountError = null
         viewModelScope.launch {
             try {
                 syncWorkScheduler.cancelAll()
                 authRepository.logout()
-                if (clearLocalProfile) {
-                    repository.clearProfile()
-                    profile = null
-                }
                 accountMessage = "Signed out. Local records remain on this phone."
                 onDone()
             } catch (error: Exception) {
@@ -308,7 +304,6 @@ class AppViewModel(
 
     private fun Role.toBackendRole(): String = when (this) {
         Role.INDIVIDUAL -> "INDIVIDUAL"
-        Role.CHW -> "INDIVIDUAL"
     }
 
     private fun String.toBackendBloodGroup(): String = when (uppercase()) {
@@ -451,13 +446,6 @@ class AppViewModel(
         }
     }
 
-    fun reviewRequest(requestId: String, action: String, reason: String?, expectedUpdatedAt: String) {
-        viewModelScope.launch {
-            repository.reviewRequest(requestId, action, reason, expectedUpdatedAt, eventOwnerAccountId())
-            scheduleSyncAfterLocalChange()
-        }
-    }
-
     fun startDiscovery(@Suppress("UNUSED_PARAMETER") id: String) = nearbyManager.flushPending()
 
     fun approveNearbyConnection(endpointId: String) = nearbyManager.approveConnection(endpointId)
@@ -488,13 +476,6 @@ class AppViewModel(
                 expectedUpdatedAt,
                 eventOwnerAccountId()
             )
-            scheduleSyncAfterLocalChange()
-        }
-    }
-
-    fun confirmDonation(requestId: String, donorRef: String, onSaved: (String) -> Unit) {
-        viewModelScope.launch {
-            onSaved(repository.confirmDonation(requestId, donorRef, eventOwnerAccountId()))
             scheduleSyncAfterLocalChange()
         }
     }

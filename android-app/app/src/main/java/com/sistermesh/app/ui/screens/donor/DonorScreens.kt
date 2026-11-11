@@ -96,6 +96,9 @@ fun DonorHomeScreen(vm: AppViewModel, nav: NavController) {
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(r.facility, style = MaterialTheme.typography.titleMedium)
+                            if (r.facilityLocation.isNotBlank()) {
+                                Text(r.facilityLocation, color = Muted)
+                            }
                             Text(r.receivedAt, style = MaterialTheme.typography.bodyMedium, color = Muted)
                         }
                         when {
@@ -144,6 +147,9 @@ private fun IncomingCard(r: IncomingRequest, onOpen: () -> Unit) {
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(r.facility, style = MaterialTheme.typography.titleMedium)
+                if (r.facilityLocation.isNotBlank()) {
+                    Text(r.facilityLocation, color = Muted)
+                }
                 Text(r.distance, style = MaterialTheme.typography.bodyMedium, color = Muted)
             }
         }
@@ -191,6 +197,7 @@ fun IncomingRequestScreen(vm: AppViewModel, nav: NavController, id: String) {
             InfoRow("Units", r.units.toString())
             HairLine()
             InfoRow("Facility", r.facility)
+            if (r.facilityLocation.isNotBlank()) InfoRow("Facility location", r.facilityLocation)
             HairLine()
             InfoRow("Distance", r.distance.removePrefix("About "))
             HairLine()

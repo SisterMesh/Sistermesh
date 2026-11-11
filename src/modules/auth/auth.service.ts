@@ -37,16 +37,6 @@ const PUBLIC_USER_SELECT = {
       isProfileComplete: true,
     },
   },
-  healthWorkerProfile: {
-    select: {
-      id: true,
-      designation: true,
-      professionalId: true,
-      verificationStatus: true,
-      verifiedAt: true,
-      facilityId: true,
-    },
-  },
 } satisfies Prisma.UserSelect;
 
 type PublicUserRecord = Prisma.UserGetPayload<{ select: typeof PUBLIC_USER_SELECT }>;
@@ -142,7 +132,6 @@ export class AuthService {
       displayName: user.displayName,
       phoneNumber: user.phoneNumber,
       donorProfile: user.donorProfile,
-      healthWorkerProfile: user.healthWorkerProfile,
     };
     return this.createSession(safeUser);
   }

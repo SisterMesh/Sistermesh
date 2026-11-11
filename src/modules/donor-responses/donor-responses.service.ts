@@ -216,46 +216,16 @@ export class DonorResponsesService {
             status: true,
             expiresAt: true,
             createdAt: true,
+            facilityId: true,
+            facilityName: true,
+            facilityLocation: true,
+            facilityLatitude: true,
+            facilityLongitude: true,
             facility: { select: { id: true, name: true, locality: true, state: true } },
           },
         },
       },
       orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  async listForRequest(user: AuthenticatedUser, requestId: string) {
-    const worker = await this.prisma.user.findUnique({
-      where: { id: user.id },
-      include: { healthWorkerProfile: { include: { facility: { select: { status: true } } } } },
-    });
-    if (
-      !worker ||
-      worker.status !== 'ACTIVE' ||
-      worker.role !== UserRole.HEALTH_WORKER ||
-      worker.healthWorkerProfile?.verificationStatus !== 'VERIFIED' ||
-      !worker.healthWorkerProfile.facilityId ||
-      worker.healthWorkerProfile.facility?.status !== 'ACTIVE'
-    ) {
-      throw new ForbiddenException('An active, verified health worker assigned to an active facility is required.');
-    }
-    const request = await this.prisma.emergencyRequest.findUnique({
-      where: { id: requestId },
-      select: { facilityId: true },
-    });
-    if (!request || request.facilityId !== worker.healthWorkerProfile.facilityId) {
-      throw new NotFoundException('Emergency request not found.');
-    }
-    return this.prisma.donorResponse.findMany({
-      where: { requestId },
-      select: {
-        id: true,
-        status: true,
-        respondedAt: true,
-        createdAt: true,
-        donorProfile: { select: { id: true, bloodGroup: true } },
-      },
-      orderBy: { createdAt: 'asc' },
     });
   }
 

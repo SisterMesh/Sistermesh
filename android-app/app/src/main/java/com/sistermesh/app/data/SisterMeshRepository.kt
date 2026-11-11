@@ -5,7 +5,6 @@ import com.sistermesh.app.data.local.AppMetadataEntity
 import com.sistermesh.app.data.local.DeviceInfoEntity
 import com.sistermesh.app.data.local.DonationConfirmationEntity
 import com.sistermesh.app.data.local.EmergencyRequestEntity
-import com.sistermesh.app.data.local.FacilityEntity
 import com.sistermesh.app.data.local.LocalEventFactory
 import com.sistermesh.app.data.local.ProfileEntity
 import com.sistermesh.app.data.local.RequestActivityEntity
@@ -61,10 +60,6 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
     fun observeProfile() = profiles.observe().map { it?.toDomain() }
     fun observeRequests() = requests.observeOutgoingWithResponses().map { rows -> rows.map { it.toDomain() } }
     fun observeIncoming() = requests.observeIncoming().map { rows -> rows.map { it.toIncomingDomain() } }
-    fun observeFacilityRequests() = requests.observeFacilityWithResponses().map { rows -> rows.map { it.toDomain() } }
-    fun observeFacilities() = database.facilityDao().observe().map { rows ->
-        rows.map { Facility(it.id, it.name, it.locality, it.state) }
-    }
     fun observeReceipts() = confirmations.observeAll().map { rows -> rows.map { it.toReceipt() } }
     fun observePendingEvents() = events.observePending()
     fun observeEventsForReview() = events.observeNeedsReview()
@@ -104,15 +99,6 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
 
     suspend fun setAvailability(available: Boolean) = profiles.setAvailability(available)
     suspend fun setLanguage(language: String) = profiles.setLanguage(language)
-
-    suspend fun storeFacilities(facilities: List<Facility>) {
-        database.withTransaction {
-            database.facilityDao().clear()
-            database.facilityDao().upsertAll(facilities.map {
-                FacilityEntity(it.id, it.name, it.locality, it.state)
-            })
-        }
-    }
 
     suspend fun clearProfile() = profiles.clear()
 
@@ -257,46 +243,12 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                     additionalInfo = additionalInfo,
                     note = additionalInfo.orEmpty(),
                     updatedAt = now,
-                    status = RequestStatus.PENDING_FACILITY_VERIFICATION.name,
+                    status = RequestStatus.OPEN.name,
                     syncStatus = "PENDING"
                 )
             )
             activities.insertIfAbsent(activity(localId, "UPDATED", "INDIVIDUAL", now))
             events.insertIfAbsent(event)
-        }
-    }
-
-    suspend fun reviewRequest(
-        localId: String,
-        action: String,
-        reason: String?,
-        expectedUpdatedAt: String,
-        ownerAccountId: String? = null
-    ) {
-        val request = requests.get(localId) ?: return
-        val now = LocalEventFactory.now()
-        val payload = JSONObject()
-            .put("action", action)
-            .put("expectedUpdatedAt", expectedUpdatedAt)
-        reason?.takeIf(String::isNotBlank)?.let { payload.put("reason", it) }
-        val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }
-            .clientDeviceId.toString()
-        val event = LocalEventFactory.event(
-            eventType = "request.review",
-            localEntityId = localId,
-            entityId = request.serverId,
-            originDeviceId = deviceId,
-            localCreatedAt = now,
-            payload = payload.toString(),
-            dependsOnEventId = events.latestForEntity(localId)?.eventId,
-            blockedReason = if (request.serverId == null || request.lastServerCursor == null) {
-                "MISSING_SERVER_VERSION" to "Download the latest server request before reviewing it."
-            } else null,
-            ownerAccountId = ownerAccountId
-        )
-        database.withTransaction {
-            events.insertIfAbsent(event)
-            activities.insertIfAbsent(activity(localId, "REVIEW_QUEUED", "HEALTH_WORKER", now))
         }
     }
 
@@ -421,87 +373,9 @@ class SisterMeshRepository(private val database: SisterMeshDatabase) {
                     syncStatus = "PENDING"
                 )
             )
-            activities.insertIfAbsent(activity(localId, "UPDATED", "HEALTH_WORKER", now))
+            activities.insertIfAbsent(activity(localId, "UPDATED", "INDIVIDUAL", now))
             events.insertIfAbsent(event)
         }
-    }
-
-    suspend fun confirmDonation(requestId: String, donorRef: String, ownerAccountId: String? = null): String {
-        val request = requireNotNull(requests.get(requestId)) { "Emergency request not found: $requestId" }
-        val response = responses.find(requestId, donorRef)
-        val now = LocalEventFactory.now()
-        val stamp = nowStamp()
-        val receiptId = "SM-R-${requestId.removePrefix("REQ-").takeLast(8)}"
-        val receiptHash = sha256("$requestId|$donorRef|$stamp")
-        val profile = profiles.get()
-        val deviceId = requireNotNull(devices.get()) { "Device identity has not been initialized." }.clientDeviceId.toString()
-        val payload = JSONObject().put("receiptHash", receiptHash).put("consentedAt", now)
-        response?.donorProfileId?.let { payload.put("donorProfileId", it) }
-        val blockedReason = when {
-            response?.donorProfileId == null -> "MISSING_DONOR_PROFILE_ID" to "A verified donor profile ID is required before this confirmation can sync."
-            request.serverId == null -> "WAITING_FOR_SERVER_ENTITY_ID" to "This confirmation is waiting for the request's server ID."
-            else -> null
-        }
-        database.withTransaction {
-            val event = LocalEventFactory.event(
-                eventType = "donation.confirm",
-                localEntityId = requestId,
-                entityId = request.serverId,
-                originDeviceId = deviceId,
-                localCreatedAt = now,
-                payload = payload.toString(),
-                dependsOnEventId = events.latestForEntity(requestId)?.eventId,
-                blockedReason = blockedReason,
-                ownerAccountId = ownerAccountId
-            )
-            requests.upsert(
-                request.copy(status = RequestStatus.COMPLETED.name, updatedAt = now, syncStatus = "PENDING")
-            )
-            if (response != null) {
-                responses.upsert(response.copy(status = ResponseStatus.CONFIRMED.name, syncStatus = "PENDING"))
-            }
-            confirmations.upsert(
-                DonationConfirmationEntity(
-                    id = receiptId,
-                    requestLocalId = requestId,
-                    donorProfileId = response?.donorProfileId,
-                    donorRef = donorRef,
-                    confirmedBy = profile?.role ?: "HEALTH_WORKER",
-                    confirmedAt = now,
-                    status = "Confirmed by healthcare worker",
-                    receiptHash = receiptHash,
-                    syncStatus = "PENDING"
-                )
-            )
-            activities.insertIfAbsent(activity(requestId, "DONATION_CONFIRMED", "HEALTH_WORKER", now))
-            events.insertIfAbsent(event)
-        }
-        return receiptId
-    }
-
-    suspend fun simulateFacilityConfirmation(localId: String): String {
-        val request = requireNotNull(requests.get(localId)) { "Incoming request not found: $localId" }
-        val profile = profiles.get()
-        val donorRef = profile?.toDomain()?.donorRef ?: "0000"
-        val stamp = nowStamp()
-        val now = LocalEventFactory.now()
-        val receiptId = "SM-R-${localId.removePrefix("REQ-").takeLast(8)}"
-        database.withTransaction {
-            requests.upsert(request.copy(confirmed = true, updatedAt = now))
-            confirmations.upsert(
-                DonationConfirmationEntity(
-                    id = receiptId,
-                    requestLocalId = localId,
-                    donorRef = donorRef,
-                    confirmedBy = "DEMO_FACILITY",
-                    confirmedAt = now,
-                    status = "Confirmed by healthcare worker",
-                    receiptHash = sha256("$localId|$donorRef|$stamp"),
-                    isDemo = true
-                )
-            )
-        }
-        return receiptId
     }
 
     suspend fun simulateIncoming(profile: Profile?): String {

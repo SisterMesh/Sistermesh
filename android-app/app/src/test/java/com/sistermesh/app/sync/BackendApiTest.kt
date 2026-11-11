@@ -50,30 +50,6 @@ class BackendApiTest {
     }
 
     @Test
-    fun healthWorkerRegistrationDoesNotSendClientAssignedRoleOrFacility() = runBlocking {
-        server.enqueue(
-            MockResponse()
-                .addHeader("Set-Cookie", "sistermesh_refresh=worker-cookie; Path=/api/auth; HttpOnly; Secure")
-                .setBody(sessionJson("HEALTH_WORKER"))
-        )
-
-        api.registerHealthWorker(
-            displayName = "Local worker",
-            phoneNumber = "+2348012345678",
-            password = "not-a-real-password",
-            designation = "Nurse",
-            professionalId = "PRO-1"
-        )
-        val request = server.takeRequest()
-        val body = JSONObject(request.body.readUtf8())
-
-        assertEquals("/api/auth/register/health-worker", request.path)
-        assertTrue(!body.has("role"))
-        assertTrue(!body.has("facilityId"))
-        assertEquals("PRO-1", body.getString("professionalId"))
-    }
-
-    @Test
     fun uploadUsesBearerIdentityAndStableBatchEnvelope() = runBlocking {
         server.enqueue(
             MockResponse().setBody(
@@ -138,6 +114,42 @@ class BackendApiTest {
         assertEquals("0", page.checkpoint)
         assertEquals("1", page.nextCursor)
         assertEquals("Community Clinic", page.changes.single().request.facilityName)
+    }
+
+    @Test
+    fun changesParserAcceptsFreeformDestinationWithoutFacilityRecord() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {
+                  "checkpoint":"0","nextCursor":"1","hasMore":false,
+                  "changes":[{
+                    "cursor":"1","eventType":"CREATED","fromStatus":null,
+                    "toStatus":"OPEN","occurredAt":"2026-11-07T12:00:00.000Z",
+                    "request":{
+                      "id":"00000000-0000-4000-8000-000000000001",
+                      "requestedBloodGroup":"O_NEGATIVE","urgency":"URGENT","units":1,
+                      "status":"OPEN","expiresAt":null,
+                      "createdAt":"2026-11-07T11:00:00.000Z",
+                      "facilityId":null,"facility":null,
+                      "facilityName":"Community Clinic",
+                      "facilityLocation":"Ikeja, Lagos",
+                      "facilityLatitude":6.6018,"facilityLongitude":3.3515,
+                      "isMine":false
+                    }
+                  }]
+                }
+                """.trimIndent()
+            )
+        )
+
+        val request = api.getChanges("access-test", "server-device").changes.single().request
+
+        assertEquals("Community Clinic", request.facilityName)
+        assertEquals("Ikeja, Lagos", request.facilityLocation)
+        assertEquals(6.6018, request.facilityLatitude!!, 0.0001)
+        assertEquals(3.3515, request.facilityLongitude!!, 0.0001)
+        assertEquals("", request.facilityId)
     }
 
     @Test

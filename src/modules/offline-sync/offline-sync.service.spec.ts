@@ -57,6 +57,7 @@ describe('OfflineSyncService', () => {
           facility: { status: 'ACTIVE' },
         }),
       },
+      donorProfile: { findUnique: jest.fn().mockResolvedValue(null) },
       syncCheckpoint: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           lastCursor: 0n,
@@ -165,7 +166,13 @@ describe('OfflineSyncService', () => {
           originDeviceId: clientDeviceId,
           localCreatedAt: now,
           payloadSchemaVersion: 1,
-          payload: { requestedBloodGroup: 'O_NEGATIVE', urgency: 'URGENT', units: 1 },
+          payload: {
+            requestedBloodGroup: 'O_NEGATIVE',
+            urgency: 'URGENT',
+            units: 1,
+            facilityName: 'Community Clinic',
+            facilityLocation: 'Lagos',
+          },
         },
         {
           eventId: secondEventId,
@@ -174,7 +181,13 @@ describe('OfflineSyncService', () => {
           originDeviceId: clientDeviceId,
           localCreatedAt: now,
           payloadSchemaVersion: 1,
-          payload: { requestedBloodGroup: 'O_NEGATIVE', urgency: 'URGENT', units: 1 },
+          payload: {
+            requestedBloodGroup: 'O_NEGATIVE',
+            urgency: 'URGENT',
+            units: 1,
+            facilityName: 'Community Clinic',
+            facilityLocation: 'Lagos',
+          },
           userId: 'untrusted',
         },
       ],

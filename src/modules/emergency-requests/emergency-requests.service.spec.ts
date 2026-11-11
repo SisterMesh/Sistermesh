@@ -25,6 +25,7 @@ describe("EmergencyRequestsService", () => {
       units: 2,
       facilityName: "City Hospital",
       facilityLocation: "Lagos",
+      isForSelf: true,
       expiresAt: expiresAt.toISOString(),
     };
     const existing = {
@@ -39,7 +40,7 @@ describe("EmergencyRequestsService", () => {
       urgency: dto.urgency,
       units: dto.units,
       expiresAt,
-      isForSelf: false,
+      isForSelf: true,
       beneficiaryName: null,
       beneficiaryRelationship: null,
       additionalInfo: null,

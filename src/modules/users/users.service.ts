@@ -25,16 +25,6 @@ export class UsersService {
       select: {
         ...USER_PROFILE_SELECT,
         donorProfile: { select: { id: true, bloodGroup: true, isAvailable: true, locality: true, isProfileComplete: true } },
-        healthWorkerProfile: {
-          select: {
-            id: true,
-            designation: true,
-            professionalId: true,
-            verificationStatus: true,
-            verifiedAt: true,
-            facilityId: true,
-          },
-        },
       },
     });
     if (!record || record.status !== AccountStatus.ACTIVE) throw new NotFoundException('User profile not found.');
@@ -73,6 +63,9 @@ export class UsersService {
 
   async setRole(admin: AuthenticatedUser | string, userId: string, role: UserRole) {
     if (role === UserRole.DONOR) role = UserRole.INDIVIDUAL;
+    if (role === UserRole.HEALTH_WORKER) {
+      throw new ForbiddenException('Health-worker roles are no longer available.');
+    }
     const actorId = typeof admin === 'string' ? admin : admin.id;
     return this.prisma.$transaction(
       async (tx) => {
@@ -100,33 +93,6 @@ export class UsersService {
           data: { role },
           select: USER_PROFILE_SELECT,
         });
-        if (role === UserRole.HEALTH_WORKER) {
-          await tx.healthWorkerProfile.upsert({
-            where: { userId },
-            create: { userId, verificationStatus: 'PENDING', facilityId: null },
-            update:
-              target.role === UserRole.HEALTH_WORKER
-                ? {}
-                : {
-                    facilityId: null,
-                    verificationStatus: 'PENDING',
-                    verifiedAt: null,
-                  },
-          });
-        }
-        if (
-          target.role === UserRole.HEALTH_WORKER &&
-          role !== UserRole.HEALTH_WORKER
-        ) {
-          await tx.healthWorkerProfile.updateMany({
-            where: { userId },
-            data: {
-              facilityId: null,
-              verificationStatus: 'PENDING',
-              verifiedAt: null,
-            },
-          });
-        }
         await tx.refreshToken.updateMany({
           where: { userId, revokedAt: null },
           data: { revokedAt: new Date() },

@@ -5,7 +5,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class Role { INDIVIDUAL, CHW }
+enum class Role { INDIVIDUAL }
 enum class UseMode { FIND_BLOOD, DONATE_BLOOD }
 
 enum class Urgency(val label: String) { CRITICAL("Critical"), URGENT("Urgent") }
@@ -17,9 +17,7 @@ enum class ResponseStatus(val label: String) {
 }
 
 enum class RequestStatus(val label: String) {
-    PENDING_FACILITY_VERIFICATION("Waiting for facility review"),
-    NEEDS_INFORMATION("More information needed"),
-    REJECTED("Not approved"),
+    REJECTED("Closed"),
     OPEN("Open to donors"),
     PARTIALLY_FILLED("Partially filled"),
     FULFILLED("Fulfilled"),
@@ -27,8 +25,6 @@ enum class RequestStatus(val label: String) {
     COMPLETED("Completed"), CANCELLED("Cancelled"), EXPIRED("Expired");
 
     val isActive get() = this in setOf(
-        PENDING_FACILITY_VERIFICATION,
-        NEEDS_INFORMATION,
         OPEN,
         PARTIALLY_FILLED,
         SEARCHING,
@@ -75,9 +71,6 @@ data class BloodRequest(
     val units: Int,
     val note: String,
     val facility: String,
-    val facilityLocation: String = "",
-    val facilityLatitude: Double? = null,
-    val facilityLongitude: Double? = null,
     val createdAt: String,
     val status: RequestStatus,
     val serverUpdatedAt: String? = null,
@@ -90,7 +83,10 @@ data class BloodRequest(
     val devicesFound: Int = 0,
     val delivered: Int = 0,
     val responses: List<DonorResponse> = emptyList(),
-    val reviewedAt: String? = null
+    val reviewedAt: String? = null,
+    val facilityLocation: String = "",
+    val facilityLatitude: Double? = null,
+    val facilityLongitude: Double? = null
 ) {
     val accepted get() = responses.count { it.status == ResponseStatus.ACCEPTED || it.status == ResponseStatus.CONFIRMED }
     val declined get() = responses.count { it.status == ResponseStatus.DECLINED }
@@ -100,9 +96,6 @@ data class IncomingRequest(
     val id: String,
     val bloodGroup: String,
     val facility: String,
-    val facilityLocation: String = "",
-    val facilityLatitude: Double? = null,
-    val facilityLongitude: Double? = null,
     val distance: String,
     val urgency: Urgency,
     val receivedAt: String,
@@ -110,7 +103,10 @@ data class IncomingRequest(
     val units: Int,
     val decision: Decision = Decision.NONE,
     val confirmed: Boolean = false,
-    val status: RequestStatus = RequestStatus.OPEN
+    val status: RequestStatus = RequestStatus.OPEN,
+    val facilityLocation: String = "",
+    val facilityLatitude: Double? = null,
+    val facilityLongitude: Double? = null
 )
 
 data class Receipt(

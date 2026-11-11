@@ -740,7 +740,8 @@ class SyncEngine(
 
     private fun mapRequestStatus(status: String): String = when (status) {
         "OPEN", "PARTIALLY_FILLED", "FULFILLED", "CANCELLED", "EXPIRED",
-        "PENDING_FACILITY_VERIFICATION", "NEEDS_INFORMATION", "REJECTED" -> status
+        "PENDING_FACILITY_VERIFICATION", "NEEDS_INFORMATION" -> "OPEN"
+        "REJECTED" -> status
         "SEARCHING" -> "SEARCHING"
         "WAITING" -> "WAITING"
         "ACCEPTED", "LEGACY_ACCEPTED" -> "ACCEPTED"
@@ -777,11 +778,8 @@ class SyncEngine(
     private fun stableConflictId(source: String, eventId: String, code: String, detail: String): String =
         UUID.nameUUIDFromBytes("SisterMeshConflict/v1:$source:$eventId:$code:$detail".toByteArray(StandardCharsets.UTF_8)).toString()
 
-    private fun String.toBackendRole(): String = when (this) {
-        "INDIVIDUAL" -> "INDIVIDUAL"
-        "CHW" -> "INDIVIDUAL"
-        else -> throw IllegalArgumentException("Unsupported local profile role.")
-    }
+    private fun String.toBackendRole(): String =
+        if (this == "INDIVIDUAL") "INDIVIDUAL" else throw IllegalArgumentException("Unsupported local profile role.")
 
     companion object {
         private const val PAGE_LIMIT = 50
