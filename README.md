@@ -8,6 +8,12 @@ community members willing to donate. It focuses on pregnancy and childbirth
 emergencies and on places where families cannot depend on mobile data or
 reliable phone networks. The project is starting in Akwa Ibom State, Nigeria.
 
+## Download the Android app
+
+[View SisterMesh releases](https://github.com/SisterMesh/Sistermesh/releases).
+A production APK will be posted there after it is built for a production
+service and signed for distribution. No production APK is available yet.
+
 ## How SisterMesh works
 
 People use one of two modes:
@@ -55,6 +61,5 @@ months, supporting offline voice features in three languages, and measuring
 request-to-response time, requests receiving a willing donor, and donor
 retention. These are project goals, not reported pilot results.
 
-The project is intended for open collaboration and reuse. A formal licence,
-contribution guide, and deployment materials should accompany the public
-release.
+SisterMesh is licensed under the [MIT License](LICENSE). A contribution guide
+and deployment materials are planned as the project grows.
